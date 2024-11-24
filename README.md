@@ -190,5 +190,3 @@ MIT License
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 --- 
-
-These updates include improved color schemes, rounded designs, ELK renderer for better layouts, and Markdown-friendly diagrams. Let me know if you’d like further refinements!
