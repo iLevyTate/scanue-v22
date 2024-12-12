@@ -190,3 +190,38 @@ async def test_agent_initialization(mock_env_vars):
     
     for agent, env_key, expected_model in test_cases:
         assert agent.llm.model_name == expected_model
+
+@pytest.mark.asyncio
+async def test_specialized_agent_error_types(mock_env_vars, test_state):
+    """Test error type handling in specialized agents"""
+    agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
+    error_types = {
+        "connection": ConnectionError("Connection failed"),
+        "timeout": asyncio.TimeoutError(),
+        "cancelled": asyncio.CancelledError(),
+        "unknown": ValueError("Unknown error")
+    }
+    
+    for agent in agents:
+        for error_type, exception in error_types.items():
+            with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=exception):
+                result = await agent.process(test_state)
+                assert result["error"]
+                assert result["error_type"] == error_type
+
+@pytest.mark.asyncio
+async def test_specialized_agent_response_format(mock_env_vars, test_state):
+    """Test response format from specialized agents"""
+    agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
+    
+    for agent in agents:
+        mock_response = AsyncMock()
+        mock_response.content = "test response"
+        with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
+            result = await agent.process(test_state)
+            assert isinstance(result, dict)
+            assert "response" in result
+            assert "error" in result
+            assert "error_type" in result
+            assert not result["error"]
+            assert result["error_type"] is None

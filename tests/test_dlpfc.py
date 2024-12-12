@@ -3,6 +3,9 @@ import asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 from agents.dlpfc import DLPFCAgent
 from typing import Dict, Any
+import openai
+from langchain.chat_models import ChatOpenAI
+from langchain.exceptions import AuthenticationError, ConnectionError
 
 @pytest.fixture
 def mock_env_vars():
@@ -133,3 +136,42 @@ def test_dlpfc_parse_subtasks(dlpfc_agent):
     assert len(subtasks) > 0
     assert all(isinstance(task, dict) for task in subtasks)
     assert all("task" in task and "agent" in task for task in subtasks)
+
+@pytest.mark.asyncio
+async def test_dlpfc_error_types(dlpfc_agent, test_state):
+    """Test different error types in DLPFC agent"""
+    error_scenarios = {
+        "connection": ConnectionError("Connection failed"),
+        "timeout": asyncio.TimeoutError(),
+        "cancelled": asyncio.CancelledError(),
+        "api_error": openai.APIError("API Error"),
+        "auth_error": AuthenticationError("Invalid key")
+    }
+    
+    for error_type, exception in error_scenarios.items():
+        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=exception):
+            result = await dlpfc_agent.process(test_state)
+            assert result["error"]
+            assert isinstance(result["response"], str)
+            if error_type in ["connection", "api_error", "auth_error"]:
+                assert result["error_type"] == "connection"
+            else:
+                assert result["error_type"] == error_type
+
+@pytest.mark.asyncio
+async def test_dlpfc_subtask_parsing_edge_cases(dlpfc_agent):
+    """Test edge cases in subtask parsing"""
+    test_cases = [
+        ("", []),  # Empty response
+        ("No tasks found", []),  # No tasks in response
+        ("1. Task without agent", [{"task": "Task without agent", "agent": None, "category": "general"}]),
+        ("Invalid format\nRandom text", []),  # Invalid format
+        ("1. Task 1 - Agent: VMPFC\n2. Task 2 - Agent: OFC", [
+            {"task": "Task 1", "agent": "VMPFC", "category": "general"},
+            {"task": "Task 2", "agent": "OFC", "category": "general"}
+        ])
+    ]
+    
+    for response, expected in test_cases:
+        result = dlpfc_agent._parse_subtasks(response)
+        assert result == expected

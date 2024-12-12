@@ -345,3 +345,43 @@ def test_hitl_feedback_history(mock_env_vars):
     
     # Verify previous response is updated
     assert state["previous_response"] == "test response 2"
+
+@pytest.mark.asyncio
+async def test_workflow_error_propagation(mock_env_vars):
+    """Test error propagation through workflow stages"""
+    workflow = create_workflow()
+    
+    error_types = ["connection", "timeout", "cancelled", "unknown"]
+    stages = ["task_delegation", "emotional_regulation", "reward_processing", 
+              "conflict_detection", "value_assessment"]
+    
+    for stage in stages:
+        for error_type in error_types:
+            initial_state = {
+                "task": "test task",
+                "stage": stage,
+                "response": "",
+                "subtasks": [],
+                "feedback": "",
+                "previous_response": "",
+                "feedback_history": [],
+                "error": False
+            }
+            
+            async def mock_error_process(*args, **kwargs):
+                return {
+                    "response": f"{error_type} error",
+                    "error": True,
+                    "error_type": error_type
+                }
+            
+            with patch("agents.dlpfc.DLPFCAgent.process", new=mock_error_process), \
+                 patch("agents.specialized.VMPFCAgent.process", new=mock_error_process), \
+                 patch("agents.specialized.OFCAgent.process", new=mock_error_process), \
+                 patch("agents.specialized.ACCAgent.process", new=mock_error_process), \
+                 patch("agents.specialized.MPFCAgent.process", new=mock_error_process):
+                
+                final_state = await workflow.ainvoke(initial_state)
+                assert final_state["error"]
+                assert error_type in final_state["response"].lower()
+                assert final_state["stage"] == END
