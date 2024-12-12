@@ -104,6 +104,51 @@ async def process_value_assessment(state: Dict[str, Any]) -> Dict[str, Any]:
         print(f" Value assessment error: {str(e)}")
         return {**state, "error": True, "response": f"Error in value assessment: {str(e)}", "stage": END}
 
+async def process_agent_chain(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Process state through agent chain with improved concurrency"""
+    agents = {
+        "emotional_regulation": VMPFCAgent(),
+        "reward_processing": OFCAgent(),
+        "conflict_detection": ACCAgent(),
+        "value_assessment": MPFCAgent()
+    }
+    
+    try:
+        # Process DLPFC first
+        dlpfc_result = await process_task_delegation(state)
+        if dlpfc_result.get("error"):
+            return dlpfc_result
+        
+        # Concurrent processing of specialized agents
+        tasks = [
+            agent.process({**dlpfc_result, "agent_type": agent_type})
+            for agent_type, agent in agents.items()
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle results and preserve metadata
+        processed_results = []
+        for result in results:
+            if isinstance(result, Exception):
+                return {
+                    "error": True,
+                    "error_type": "processing",
+                    "response": str(result),
+                    "metadata": getattr(result, "metadata", {})
+                }
+            processed_results.append(result)
+        
+        return integrate_results(processed_results)
+        
+    except Exception as e:
+        return {
+            "error": True,
+            "error_type": "processing",
+            "response": f"Chain processing error: {str(e)}",
+            "metadata": getattr(e, "metadata", {})
+        }
+
 def create_workflow() -> StateGraph:
     """Create the workflow graph."""
     workflow = StateGraph(AgentState)
