@@ -1,5 +1,7 @@
 # **SCANUE-V22**
 
+[![DOI](https://zenodo.org/badge/893601857.svg)](https://doi.org/10.5281/zenodo.14510406)
+
 ## **Cognitive Agents**
 - **DLPFC Agent:** Task delegation and executive control.
 - **VMPFC Agent:** Emotional regulation and risk assessment.
