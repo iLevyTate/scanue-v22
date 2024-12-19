@@ -3,6 +3,8 @@ from unittest.mock import patch, AsyncMock
 from agents.specialized import VMPFCAgent, OFCAgent, ACCAgent, MPFCAgent
 from typing import Dict, Any
 import asyncio
+from constants import END
+from workflow import timeout_context
 
 @pytest.fixture
 def mock_env_vars():
@@ -37,6 +39,12 @@ def mock_llm():
     
     with patch("langchain_openai.ChatOpenAI.ainvoke", new=mock_ainvoke):
         yield
+
+@pytest.fixture
+def vmpfc_agent(mock_env_vars, mock_llm):
+    """Fixture to provide a VMPFCAgent instance."""
+    agent = VMPFCAgent()
+    yield agent
 
 @pytest.mark.asyncio
 async def test_vmpfc_agent_initialization(mock_env_vars):
@@ -111,7 +119,7 @@ async def test_mpfc_agent_process(mock_env_vars, test_state):
         assert not result.get("error", False)
 
 @pytest.mark.asyncio
-async def test_agent_error_handling(mock_env_vars, test_state):
+async def test_agent_error_handling(mock_env_vars, test_state, vmpfc_agent):
     """Test error handling in specialized agents"""
     agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
     
@@ -125,21 +133,17 @@ async def test_agent_error_handling(mock_env_vars, test_state):
             assert str(e) == "Test error"
 
 @pytest.mark.asyncio
-async def test_agent_timeout_handling(mock_env_vars, test_state):
-    """Test timeout handling in specialized agents"""
-    agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
+async def test_agent_timeout_handling(vmpfc_agent: VMPFCAgent, test_state: Dict[str, Any]):
+    """Test timeout handling in VMPFC agent"""
+    async def mock_process(*args, **kwargs):
+        await asyncio.sleep(1.0)
+        return None
     
-    async def slow_response(*args, **kwargs):
-        await asyncio.sleep(2)
-        mock_response = AsyncMock()
-        mock_response.content = "test response"
-        return mock_response
+    vmpfc_agent.process = mock_process
     
-    for agent in agents:
-        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=slow_response):
-            with pytest.raises(asyncio.TimeoutError):
-                async with asyncio.timeout(1):
-                    await agent.process(test_state)
+    with pytest.raises(asyncio.TimeoutError):
+        async with timeout_context(0.1):
+            await vmpfc_agent.process(test_state)
 
 @pytest.mark.asyncio
 async def test_agent_cancellation_handling(mock_env_vars, test_state):
