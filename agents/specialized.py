@@ -22,7 +22,11 @@ class VMPFCAgent(BaseAgent):
         return ChatPromptTemplate.from_template(template)
     
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        return await super().process(state)
+        try:
+            return await super().process(state)
+        except Exception as e:
+            logger.error(f"Error in VMPFCAgent processing: {str(e)}")
+            return {"error": True, "response": str(e)}
 
 class OFCAgent(BaseAgent):
     """Orbitofrontal Cortex Agent - Reward Processing"""
