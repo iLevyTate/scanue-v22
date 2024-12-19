@@ -50,20 +50,24 @@ class DLPFCAgent(BaseAgent):
             
             print(f"DLPFC Agent received response: {response}")  # Debug output
             
-            # Parse response and update state
-            updated_state = self._format_response(response.content)
-            subtasks = self._parse_subtasks(response.content)
+            # Parse and format response
+            processed_response = self._process_response(response.content)
+            subtasks = processed_response.get("subtasks", [])
+            assignments = processed_response.get("assignments", [])
+            integration = processed_response.get("integration", [])
             
             print(f"Parsed subtasks: {subtasks}")  # Debug output
             
-            updated_state.update({
+            updated_state = {
                 "subtasks": subtasks,
+                "assignments": assignments,
+                "integration": integration,
                 "stage": "task_delegation"
-            })
+            }
             
             print(f"Updated state: {updated_state}")  # Debug output
             return updated_state
-            
+
         except asyncio.CancelledError:
             error_msg = "Operation was cancelled"
             print(f"DLPFC Error: {error_msg}")  # Debug output
@@ -80,7 +84,65 @@ class DLPFCAgent(BaseAgent):
                 "error": True,
                 "stage": "error"
             }
-    
+
+    def _process_response(self, response: str) -> Dict[str, Any]:
+        """Parse and format the response from the LLM into a structured output."""
+        try:
+            lines = response.split('\n')
+            subtasks = []
+            assignments = []
+            integration = []
+            current_category = None
+
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Identify sections
+                if "subtasks" in line.lower():
+                    current_category = "subtasks"
+                    continue
+                elif "agent assignments" in line.lower():
+                    current_category = "assignments"
+                    continue
+                elif "integration plan" in line.lower():
+                    current_category = "integration"
+                    continue
+
+                # Extract content based on category
+                if current_category == "subtasks":
+                    if line[0].isdigit() or line[0] in ['-', '*', '•']:
+                        task = line.lstrip('0123456789.-*• ').strip()
+                        subtasks.append(task)
+                elif current_category == "assignments":
+                    if line[0].isdigit() or line[0] in ['-', '*', '•']:
+                        assignment = line.lstrip('0123456789.-*• ').strip()
+                        assignments.append(assignment)
+                elif current_category == "integration":
+                    if line[0].isdigit() or line[0] in ['-', '*', '•']:
+                        step = line.lstrip('0123456789.-*• ').strip()
+                        integration.append(step)
+
+            formatted_response = {
+                "subtasks": subtasks,
+                "assignments": assignments,
+                "integration": integration,
+                "error": False
+            }
+
+            return formatted_response
+
+        except Exception as e:
+            print(f"Error processing response: {str(e)}")
+            return {
+                "subtasks": [],
+                "assignments": [],
+                "integration": [],
+                "error": True,
+                "response": str(e)
+            }
+
     def _parse_subtasks(self, response: str) -> List[Dict[str, Any]]:
         """Parse the response to extract subtasks and their assignments.
         
@@ -90,7 +152,7 @@ class DLPFCAgent(BaseAgent):
         - category: The category of the task (subtask/integration)
         """
         print(f"Parsing subtasks from response: {response}")
-        
+
         try:
             lines = response.split('\n')
             subtasks = []
@@ -181,7 +243,7 @@ class DLPFCAgent(BaseAgent):
                 formatted_response.append("📋 Subtasks:")
                 for task in sections["subtasks"]:
                     formatted_response.append(f"  • {task}")
-            
+
             if sections["assignments"]:
                 formatted_response.append("\n👥 Agent Assignments:")
                 for assignment in sections["assignments"]:

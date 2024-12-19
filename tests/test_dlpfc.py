@@ -47,7 +47,7 @@ async def test_dlpfc_agent_initialization(dlpfc_agent):
     assert dlpfc_agent.llm.model_name == "dlpfc-model"
 
 @pytest.mark.asyncio
-async def test_dlpfc_agent_process(dlpfc_agent, test_state):
+async def test_dlpfc_agent_process(dlpfc_agent: DLPFCAgent, test_state: Dict[str, Any]):
     """Test DLPFC agent processing"""
     mock_response = MagicMock()
     mock_response.content = """
@@ -63,7 +63,7 @@ async def test_dlpfc_agent_process(dlpfc_agent, test_state):
     """
     
     dlpfc_agent.llm = AsyncMock()
-    dlpfc_agent.llm.ainvoke_messages = AsyncMock(return_value=mock_response)
+    dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
     
     result = await dlpfc_agent.process(test_state)
     assert isinstance(result, dict)
@@ -72,17 +72,17 @@ async def test_dlpfc_agent_process(dlpfc_agent, test_state):
     assert not result.get("error", False)
 
 @pytest.mark.asyncio
-async def test_dlpfc_agent_error_handling(dlpfc_agent, test_state):
+async def test_dlpfc_agent_error_handling(dlpfc_agent: DLPFCAgent, test_state: Dict[str, Any]):
     """Test error handling in DLPFC agent"""
     dlpfc_agent.llm = AsyncMock()
-    dlpfc_agent.llm.ainvoke_messages = AsyncMock(side_effect=ValueError("Test error"))
+    dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=ValueError("Test error"))
     
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
     assert "error" in result["response"].lower()
 
 @pytest.mark.asyncio
-async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
+async def test_dlpfc_agent_timeout(dlpfc_agent: DLPFCAgent, test_state: Dict[str, Any]):
     """Test timeout handling in DLPFC agent"""
     async def mock_process(*args, **kwargs):
         await asyncio.sleep(1)
@@ -95,18 +95,18 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
             await dlpfc_agent.process(test_state)
 
 @pytest.mark.asyncio
-async def test_dlpfc_agent_cancellation(dlpfc_agent, test_state):
+async def test_dlpfc_agent_cancellation(dlpfc_agent: DLPFCAgent, test_state: Dict[str, Any]):
     """Test cancellation handling in DLPFC agent"""
     dlpfc_agent.llm = AsyncMock()
-    dlpfc_agent.llm.ainvoke_messages = AsyncMock(side_effect=asyncio.CancelledError())
+    dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=asyncio.CancelledError())
     
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
     assert "cancelled" in result["response"].lower()
 
-def test_dlpfc_format_feedback_history(dlpfc_agent, test_state):
+def test_dlpfc_format_feedback_history(dlpfc_agent: DLPFCAgent, test_state: Dict[str, Any]):
     """Test feedback history formatting"""
-    history = test_state["feedback_history"]
+    history = test_state.get("feedback_history", [])
     formatted = dlpfc_agent._format_feedback_history(history)
     assert "stage1" in formatted
     assert "response1" in formatted
@@ -115,12 +115,12 @@ def test_dlpfc_format_feedback_history(dlpfc_agent, test_state):
     assert "response2" in formatted
     assert "feedback2" in formatted
 
-def test_dlpfc_format_feedback_history_empty(dlpfc_agent):
+def test_dlpfc_format_feedback_history_empty(dlpfc_agent: DLPFCAgent):
     """Test feedback history formatting with empty history"""
     formatted = dlpfc_agent._format_feedback_history([])
     assert formatted == "No previous feedback"
 
-def test_dlpfc_parse_subtasks(dlpfc_agent):
+def test_dlpfc_parse_subtasks(dlpfc_agent: DLPFCAgent):
     """Test subtask parsing"""
     response = """
     Here's the task breakdown:
