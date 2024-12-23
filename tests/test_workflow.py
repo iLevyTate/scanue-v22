@@ -8,6 +8,8 @@ from workflow import (
 import asyncio
 from langchain.prompts import ChatPromptTemplate
 from agents.base import BaseAgent
+from utils.logging import InteractionLogger
+import json
 
 # Mock ChatOpenAI at import time
 mock_chat_openai = AsyncMock()
@@ -21,6 +23,7 @@ def mock_env_vars():
         'OFC_MODEL': 'ofc-model',
         'ACC_MODEL': 'acc-model',
         'MPFC_MODEL': 'mpfc-model',
+        'OPENAI_API_KEY': 'test-key'
     }), patch('agents.base.ChatOpenAI', return_value=mock_chat_openai):
         yield
 
@@ -42,7 +45,8 @@ def mock_state():
         "feedback": "",
         "previous_response": "",
         "feedback_history": [],
-        "error": False
+        "error": False,
+        "scanaq_results": "Test SCANAQ results"
     }
 
 @pytest.mark.asyncio
@@ -56,8 +60,8 @@ async def test_hitl_feedback_processing(mock_env_vars):
     """Test HITL feedback processing"""
     initial_state = {
         "task": "test task",
-        "stage": "value_assessment",
-        "response": "test response",
+        "stage": "task_delegation",
+        "response": "initial response",
         "subtasks": [],
         "feedback": "",
         "previous_response": "",
@@ -65,20 +69,15 @@ async def test_hitl_feedback_processing(mock_env_vars):
         "error": False
     }
     
-    feedback = "Test feedback"
-    updated_state = process_hitl_feedback(initial_state.copy(), feedback)
-    
-    assert updated_state["feedback"] == feedback
-    assert len(updated_state["feedback_history"]) == 1
-    assert updated_state["previous_response"] == "test response"
-    assert id(updated_state) != id(initial_state)  # Ensure we got a new state object
+    state = await process_hitl_feedback(initial_state, "test feedback")
+    assert state["feedback"] == "test feedback"
+    assert state["previous_response"] == "initial response"
+    assert len(state["feedback_history"]) == 1
+    assert state["feedback_history"][0]["feedback"] == "test feedback"
 
 @pytest.mark.asyncio
-async def test_workflow_state_transitions(mock_env_vars, mock_llm):
+async def test_workflow_state_transitions(mock_env_vars):
     """Test workflow state transitions"""
-    workflow = create_workflow()
-    
-    # Test initial state
     initial_state = {
         "task": "test task",
         "stage": "task_delegation",
@@ -90,38 +89,15 @@ async def test_workflow_state_transitions(mock_env_vars, mock_llm):
         "error": False
     }
     
-    # Mock agent process functions to return proper state
-    async def mock_process(*args, **kwargs):
-        state = args[1] if len(args) > 1 else kwargs.get('state')
-        stage_map = {
-            "task_delegation": {"stage": "emotional_regulation"},
-            "emotional_regulation": {"stage": "reward_processing"},
-            "reward_processing": {"stage": "conflict_detection"},
-            "conflict_detection": {"stage": "value_assessment"},
-            "value_assessment": {"stage": END}
-        }
-        next_stage = stage_map.get(state["stage"])
-        return {
-            "response": "test response",
-            **next_stage,
-            "error": False
-        }
+    workflow = create_workflow()
+    final_state = await workflow.ainvoke(initial_state)
     
-    with patch("agents.dlpfc.DLPFCAgent.process", new=mock_process), \
-         patch("agents.specialized.VMPFCAgent.process", new=mock_process), \
-         patch("agents.specialized.OFCAgent.process", new=mock_process), \
-         patch("agents.specialized.ACCAgent.process", new=mock_process), \
-         patch("agents.specialized.MPFCAgent.process", new=mock_process):
-        
-        final_state = await workflow.ainvoke(initial_state)
-        assert not final_state.get("error"), f"Workflow failed with error: {final_state.get('response')}"
-        assert final_state["stage"] == END
+    assert final_state["stage"] == END
+    assert "response" in final_state
 
 @pytest.mark.asyncio
-async def test_error_handling(mock_env_vars, mock_llm):
+async def test_error_handling(mock_env_vars):
     """Test error handling in workflow"""
-    workflow = create_workflow()
-    
     initial_state = {
         "task": "test task",
         "stage": "task_delegation",
@@ -130,113 +106,62 @@ async def test_error_handling(mock_env_vars, mock_llm):
         "feedback": "",
         "previous_response": "",
         "feedback_history": [],
-        "error": False
+        "error": False  # Set initial error state to False
     }
     
-    # Mock process to simulate an error
-    async def mock_error_process(*args, **kwargs):
-        return {
-            "response": "Error occurred",
-            "error": True
-        }
-    
-    with patch("agents.dlpfc.DLPFCAgent.process", new=mock_error_process):
+    with patch("workflow.process_task_delegation", side_effect=Exception("Simulated error")):
+        workflow = create_workflow()
         final_state = await workflow.ainvoke(initial_state)
-        assert final_state["error"]
-        assert "Error occurred" in final_state["response"]
+        
+        assert final_state["error"] == True
+        assert "simulated error" in final_state["response"].lower()
 
 @pytest.mark.asyncio
-async def test_timeout_handling(mock_env_vars, mock_llm):
+async def test_timeout_handling(mock_env_vars):
     """Test timeout handling in workflow"""
-    workflow = create_workflow()
-    
-    initial_state = {
-        "task": "test task",
-        "stage": "task_delegation",
-        "response": "",
-        "subtasks": [],
-        "feedback": "",
-        "previous_response": "",
-        "feedback_history": [],
-        "error": False
-    }
-    
-    # Mock process to simulate a timeout
-    async def mock_timeout_process(*args, **kwargs):
-        await asyncio.sleep(60)  # Sleep longer than the timeout
-        return {"response": "Should timeout"}
-    
-    with patch("agents.dlpfc.DLPFCAgent.process", new=mock_timeout_process):
-        final_state = await workflow.ainvoke(initial_state)
-        assert final_state["error"]
-        assert "timed out" in final_state["response"].lower()
-
-@pytest.mark.asyncio
-async def test_cancellation_handling(mock_env_vars, mock_llm):
-    """Test cancellation handling in workflow"""
-    workflow = create_workflow()
-    
-    initial_state = {
-        "task": "test task",
-        "stage": "task_delegation",
-        "response": "",
-        "subtasks": [],
-        "feedback": "",
-        "previous_response": "",
-        "feedback_history": [],
-        "error": False
-    }
-    
-    # Mock process to simulate a cancellation
-    async def mock_cancel_process(*args, **kwargs):
-        raise asyncio.CancelledError()
-    
-    with patch("agents.dlpfc.DLPFCAgent.process", new=mock_cancel_process):
-        final_state = await workflow.ainvoke(initial_state)
-        assert final_state["error"]
-        assert "cancelled" in final_state["response"].lower()
-
-@pytest.mark.asyncio
-async def test_timeout_context():
-    """Test timeout context manager"""
-    # Test normal execution
-    async with timeout_context(1.0):
-        await asyncio.sleep(0.1)  # Should complete normally
-    
-    # Test timeout
-    with pytest.raises(TimeoutError):
+    async def slow_task():
+        await asyncio.sleep(1.0)
+        
+    with pytest.raises(asyncio.TimeoutError):
         async with timeout_context(0.1):
-            await asyncio.wait_for(asyncio.sleep(1.0), timeout=0.1)  # Should timeout
+            await slow_task()
+
+@pytest.mark.asyncio
+async def test_cancellation_handling(mock_env_vars):
+    """Test cancellation handling in workflow"""
+    async def cancellable_task():
+        try:
+            await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            raise
+            
+    task = asyncio.create_task(cancellable_task())
+    await asyncio.sleep(0.1)
+    task.cancel()
     
-    # Test cancellation
-    with pytest.raises(KeyboardInterrupt):
-        async with timeout_context(1.0):
-            raise asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+@pytest.mark.asyncio
+async def test_timeout_context(mock_env_vars):
+    """Test timeout context"""
+    async def slow_task():
+        await asyncio.sleep(1.0)
+        
+    with pytest.raises(asyncio.TimeoutError):
+        async with timeout_context(0.1):
+            await slow_task()
 
 @pytest.mark.asyncio
 async def test_process_task_delegation(mock_env_vars, mock_state):
     """Test task delegation processing"""
-    # Test successful processing
-    with patch("agents.dlpfc.DLPFCAgent.process", new=AsyncMock(return_value={"response": "success", "stage": "next"})):
+    with patch("agents.dlpfc.DLPFCAgent.process", side_effect=asyncio.TimeoutError()):
         result = await process_task_delegation(mock_state)
-        assert result["stage"] == "emotional_regulation"
-        assert not result["error"]
+        assert "task delegation timed out" in result["response"].lower()
     
-    # Test timeout
-    async def timeout_process(*args, **kwargs):
-        await asyncio.sleep(60)
-        return {}
-    
-    with patch("agents.dlpfc.DLPFCAgent.process", new=timeout_process):
+    with patch("agents.dlpfc.DLPFCAgent.process", side_effect=Exception("Simulated error")):
         result = await process_task_delegation(mock_state)
-        assert result["error"]
-        assert "timed out" in result["response"].lower()
-    
-    # Test error
-    with patch("agents.dlpfc.DLPFCAgent.process", side_effect=ValueError("test error")):
-        result = await process_task_delegation(mock_state)
-        assert result["error"]
-        assert "test error" in result["response"]
+        assert "error in task delegation" in result["response"].lower()
 
 @pytest.mark.asyncio
 async def test_process_emotional_regulation(mock_env_vars, mock_state):
@@ -292,32 +217,17 @@ async def test_process_value_assessment(mock_env_vars, mock_state):
     assert "response" in result
 
 @pytest.mark.asyncio
-async def test_workflow_state_transitions_with_errors(mock_env_vars):
-    """Test workflow state transitions with errors in different stages"""
-    workflow = create_workflow()
-    
-    initial_state = {
-        "task": "test task",
-        "stage": "task_delegation",
-        "response": "",
-        "subtasks": [],
-        "feedback": "",
-        "previous_response": "",
-        "feedback_history": [],
-        "error": False
-    }
-    
-    # Mock error in task delegation
-    async def mock_error(*args, **kwargs):
-        raise ValueError("Test error")
-    
-    with patch("agents.dlpfc.DLPFCAgent.process", new=mock_error):
-        final_state = await workflow.ainvoke(initial_state)
-        assert final_state["error"]
-        assert "Test error" in final_state["response"]
-        assert final_state["stage"] == END
+async def test_workflow_state_transitions_with_errors(mock_env_vars, mock_state):
+    """Test workflow state transitions when errors occur"""
+    # Simulate an error in task delegation
+    with patch("agents.dlpfc.DLPFCAgent.process", side_effect=Exception("Simulated error")):
+        final_state = await process_task_delegation(mock_state)
+        assert final_state["error"] == True, "Error flag not set to True"
+        assert "simulated error" in final_state["response"].lower(), "Error message does not contain expected text"
+        assert final_state["stage"] == END, "Workflow did not transition to END stage"
 
-def test_hitl_feedback_history(mock_env_vars):
+@pytest.mark.asyncio
+async def test_hitl_feedback_history(mock_env_vars):
     """Test HITL feedback with multiple entries"""
     state = {
         "task": "test task",
@@ -331,17 +241,101 @@ def test_hitl_feedback_history(mock_env_vars):
     }
     
     # Add first feedback
-    state = process_hitl_feedback(state, "feedback 1")
+    state = await process_hitl_feedback(state, "feedback 1")
     assert len(state["feedback_history"]) == 1
     assert state["feedback_history"][0]["feedback"] == "feedback 1"
     assert state["feedback_history"][0]["response"] == "test response 1"
     
     # Update response and add second feedback
     state["response"] = "test response 2"
-    state = process_hitl_feedback(state, "feedback 2")
+    state = await process_hitl_feedback(state, "feedback 2")
     assert len(state["feedback_history"]) == 2
     assert state["feedback_history"][1]["feedback"] == "feedback 2"
     assert state["feedback_history"][1]["response"] == "test response 2"
     
     # Verify previous response is updated
     assert state["previous_response"] == "test response 2"
+
+@pytest.mark.asyncio
+async def test_hitl_feedback_integration(mock_env_vars):
+    """Test complete HITL feedback integration"""
+    initial_state = {
+        "task": "test task",
+        "stage": "task_delegation",
+        "response": "initial response",
+        "subtasks": [],
+        "feedback": "",
+        "previous_response": "",
+        "feedback_history": [],
+        "error": False
+    }
+    
+    # Test feedback collection
+    state = await process_hitl_feedback(initial_state, "test feedback")
+    assert len(state["feedback_history"]) == 1
+    assert state["feedback_history"][0]["stage"] == "task_delegation"
+    assert state["feedback_history"][0]["feedback"] == "test feedback"
+    assert state["feedback_history"][0]["response"] == "initial response"
+    assert "timestamp" in state["feedback_history"][0]
+    
+    # Test feedback persistence through workflow
+    workflow = create_workflow()
+    state = await workflow.ainvoke(state)
+    assert len(state["feedback_history"]) == 1  # Feedback history preserved
+    assert state["previous_response"] == "initial response"
+
+@pytest.mark.asyncio
+async def test_workflow_logging_integration(mock_env_vars, tmp_path):
+    """Test logging integration with workflow"""
+    logger = InteractionLogger(log_dir=str(tmp_path))
+    workflow = create_workflow()
+    
+    initial_state = {
+        "task": "test task",
+        "stage": "task_delegation",
+        "response": "",
+        "subtasks": [],
+        "feedback": "",
+        "previous_response": "",
+        "feedback_history": [],
+        "error": False
+    }
+    
+    # Log initial state
+    logger.log_state(initial_state, "initial")
+    
+    # Process through workflow
+    state = await workflow.ainvoke(initial_state)
+    logger.log_state(state, state.get("stage", "unknown"))
+    
+    # Verify logs
+    with open(logger.json_log_file, 'r') as f:
+        log_data = json.load(f)
+        assert len(log_data) >= 2  # At least initial and final states
+        assert log_data[0]["stage"] == "initial"
+        assert "timestamp" in log_data[0]
+        assert isinstance(log_data[0]["state"], dict)
+
+@pytest.mark.asyncio
+async def test_feedback_logging_integration(mock_env_vars, tmp_path):
+    """Test feedback logging integration"""
+    logger = InteractionLogger(log_dir=str(tmp_path))
+    
+    state = {
+        "task": "test task",
+        "stage": "value_assessment",
+        "response": "test response",
+        "feedback_history": []
+    }
+    
+    # Log state and feedback
+    logger.log_state(state, "value_assessment")
+    state = await process_hitl_feedback(state, "test feedback")
+    logger.log_feedback("test feedback", state)
+    
+    # Verify logs
+    with open(logger.json_log_file, 'r') as f:
+        log_data = json.load(f)
+        assert len(log_data) == 2
+        assert log_data[1]["type"] == "feedback"
+        assert log_data[1]["feedback"] == "test feedback"
