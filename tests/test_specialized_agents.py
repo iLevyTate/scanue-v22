@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 from agents.specialized import VMPFCAgent, OFCAgent, ACCAgent, MPFCAgent
-from typing import Dict, Any
+from typing import Dict, Any, Type
 import asyncio
+from agents.base import BaseAgent # Import BaseAgent for type hinting
 
 @pytest.fixture
 def mock_env_vars():
@@ -38,146 +39,60 @@ def mock_llm():
     with patch("langchain_openai.ChatOpenAI.ainvoke", new=mock_ainvoke):
         yield
 
+@pytest.mark.parametrize("agent_class", [
+    VMPFCAgent,
+    OFCAgent,
+    ACCAgent,
+    MPFCAgent,
+])
 @pytest.mark.asyncio
-async def test_vmpfc_agent_initialization(mock_env_vars):
-    """Test VMPFC agent initialization"""
-    agent = VMPFCAgent()
-    assert agent.llm.model_name == "vmpfc-model"
-
-@pytest.mark.asyncio
-async def test_vmpfc_agent_process(mock_env_vars, test_state):
-    """Test VMPFC agent processing"""
-    agent = VMPFCAgent()
-    mock_response = AsyncMock()
-    mock_response.content = "test response"
-    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
-        result = await agent.process(test_state)
-        assert isinstance(result, dict)
-        assert "response" in result
-        assert not result.get("error", False)
-
-@pytest.mark.asyncio
-async def test_ofc_agent_initialization(mock_env_vars):
-    """Test OFC agent initialization"""
-    agent = OFCAgent()
-    assert agent.llm.model_name == "ofc-model"
-
-@pytest.mark.asyncio
-async def test_ofc_agent_process(mock_env_vars, test_state):
-    """Test OFC agent processing"""
-    agent = OFCAgent()
-    mock_response = AsyncMock()
-    mock_response.content = "test response"
-    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
-        result = await agent.process(test_state)
-        assert isinstance(result, dict)
-        assert "response" in result
-        assert not result.get("error", False)
-
-@pytest.mark.asyncio
-async def test_acc_agent_initialization(mock_env_vars):
-    """Test ACC agent initialization"""
-    agent = ACCAgent()
-    assert agent.llm.model_name == "acc-model"
-
-@pytest.mark.asyncio
-async def test_acc_agent_process(mock_env_vars, test_state):
-    """Test ACC agent processing"""
-    agent = ACCAgent()
-    mock_response = AsyncMock()
-    mock_response.content = "test response"
-    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
-        result = await agent.process(test_state)
-        assert isinstance(result, dict)
-        assert "response" in result
-        assert not result.get("error", False)
-
-@pytest.mark.asyncio
-async def test_mpfc_agent_initialization(mock_env_vars):
-    """Test MPFC agent initialization"""
-    agent = MPFCAgent()
-    assert agent.llm.model_name == "mpfc-model"
-
-@pytest.mark.asyncio
-async def test_mpfc_agent_process(mock_env_vars, test_state):
-    """Test MPFC agent processing"""
-    agent = MPFCAgent()
-    mock_response = AsyncMock()
-    mock_response.content = "test response"
-    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
-        result = await agent.process(test_state)
-        assert isinstance(result, dict)
-        assert "response" in result
-        assert not result.get("error", False)
+async def test_specialized_agent_process(agent_class: Type[BaseAgent], mock_env_vars, test_state, mock_llm):
+    """Test specialized agent processing using mock_llm fixture"""
+    agent = agent_class()
+    # mock_llm fixture is automatically used here due to dependency injection
+    result = await agent.process(test_state)
+    assert isinstance(result, dict)
+    assert "response" in result
+    # Ensure the mock response content is checked
+    assert result["response"] == "test response"
+    assert not result.get("error", False)
 
 @pytest.mark.asyncio
 async def test_agent_error_handling(mock_env_vars, test_state):
     """Test error handling in specialized agents"""
     agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
-    
+
     for agent in agents:
-        try:
-            with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=ValueError("Test error")):
-                result = await agent.process(test_state)
-                assert result["error"]
-                assert "error" in result["response"].lower()
-        except ValueError as e:
-            assert str(e) == "Test error"
+        # Remove the try...except block, rely on agent's internal handling
+        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=ValueError("Test error")):
+            result = await agent.process(test_state)
+            assert result["error"] # Check if the agent correctly flagged the error
+            # Optionally, check if the error message is propagated
+            assert "error" in result["response"].lower()
+            assert "Test error" in result["response"] # Be more specific if possible
 
 @pytest.mark.asyncio
 async def test_agent_timeout_handling(mock_env_vars, test_state):
     """Test timeout handling in specialized agents"""
     agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
-    
-    async def slow_response(*args, **kwargs):
-        await asyncio.sleep(2)
-        mock_response = AsyncMock()
-        mock_response.content = "test response"
-        return mock_response
-    
+
     for agent in agents:
-        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=slow_response):
-            with pytest.raises(asyncio.TimeoutError):
-                async with asyncio.timeout(1):
-                    await agent.process(test_state)
+        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.TimeoutError("Request timed out. Please try again.")):
+            result = await agent.process(test_state)
+            assert result["error"]
+            assert "timed out" in result["response"].lower()
+            assert "Request timed out" in result["response"]
 
 @pytest.mark.asyncio
 async def test_agent_cancellation_handling(mock_env_vars, test_state):
     """Test cancellation handling in specialized agents"""
     agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
-    
+
     for agent in agents:
-        try:
-            with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError()):
-                result = await agent.process(test_state)
-                assert result["error"]
-                assert "cancelled" in result["response"].lower()
-        except asyncio.CancelledError:
-            pass
-
-@pytest.mark.asyncio
-async def test_vmpfc_agent(mock_env_vars, mock_llm):
-    agent = VMPFCAgent()
-    result = await agent.process({"task": "test"})
-    assert result["response"] == "test response"
-
-@pytest.mark.asyncio
-async def test_ofc_agent(mock_env_vars, mock_llm):
-    agent = OFCAgent()
-    result = await agent.process({"task": "test"})
-    assert result["response"] == "test response"
-
-@pytest.mark.asyncio
-async def test_acc_agent(mock_env_vars, mock_llm):
-    agent = ACCAgent()
-    result = await agent.process({"task": "test"})
-    assert result["response"] == "test response"
-
-@pytest.mark.asyncio
-async def test_mpfc_agent(mock_env_vars, mock_llm):
-    agent = MPFCAgent()
-    result = await agent.process({"task": "test"})
-    assert result["response"] == "test response"
+        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError("Test cancellation")):
+            result = await agent.process(test_state)
+            assert result["error"]
+            assert "cancelled" in result["response"].lower()
 
 @pytest.mark.asyncio
 async def test_agent_initialization(mock_env_vars):
