@@ -49,7 +49,7 @@ async def test_dlpfc_agent_initialization(dlpfc_agent):
 @pytest.mark.asyncio
 async def test_dlpfc_agent_process(dlpfc_agent, test_state):
     """Test DLPFC agent processing"""
-    mock_response = MagicMock()
+    mock_response = AsyncMock()
     mock_response.content = """
     Here's the task breakdown:
     1. Subtask 1 - Assign to VMPFC
@@ -63,7 +63,7 @@ async def test_dlpfc_agent_process(dlpfc_agent, test_state):
     """
     
     dlpfc_agent.llm = AsyncMock()
-    dlpfc_agent.llm.ainvoke_messages = AsyncMock(return_value=mock_response)
+    dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
     
     result = await dlpfc_agent.process(test_state)
     assert isinstance(result, dict)
@@ -75,7 +75,7 @@ async def test_dlpfc_agent_process(dlpfc_agent, test_state):
 async def test_dlpfc_agent_error_handling(dlpfc_agent, test_state):
     """Test error handling in DLPFC agent"""
     dlpfc_agent.llm = AsyncMock()
-    dlpfc_agent.llm.ainvoke_messages = AsyncMock(side_effect=ValueError("Test error"))
+    dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=ValueError("Test error"))
     
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
@@ -98,7 +98,7 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
 async def test_dlpfc_agent_cancellation(dlpfc_agent, test_state):
     """Test cancellation handling in DLPFC agent"""
     dlpfc_agent.llm = AsyncMock()
-    dlpfc_agent.llm.ainvoke_messages = AsyncMock(side_effect=asyncio.CancelledError())
+    dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=asyncio.CancelledError())
     
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
@@ -120,7 +120,8 @@ def test_dlpfc_format_feedback_history_empty(dlpfc_agent):
     formatted = dlpfc_agent._format_feedback_history([])
     assert formatted == "No previous feedback"
 
-def test_dlpfc_parse_subtasks(dlpfc_agent):
+@pytest.mark.asyncio
+async def test_dlpfc_parse_subtasks(dlpfc_agent):
     """Test subtask parsing"""
     response = """
     Here's the task breakdown:
@@ -128,8 +129,175 @@ def test_dlpfc_parse_subtasks(dlpfc_agent):
     2. Generate options - Assign to OFC
     3. Monitor progress - Assign to ACC
     """
-    subtasks = dlpfc_agent._parse_subtasks(response)
+    subtasks = await dlpfc_agent._parse_subtasks(response)
     assert isinstance(subtasks, list)
     assert len(subtasks) > 0
     assert all(isinstance(task, dict) for task in subtasks)
     assert all("task" in task and "agent" in task for task in subtasks)
+
+@pytest.mark.asyncio
+async def test_malformed_llm_response(dlpfc_agent, test_state):
+    """Test handling of malformed LLM responses."""
+    malformed_responses = [
+        # Empty response
+        "",
+        # Invalid JSON
+        "{invalid json}",
+        # Missing required sections
+        "Random text without structure",
+        # Incomplete structure
+        """
+        Here's the task breakdown:
+        1. Incomplete task
+        Integration plan:
+        """,
+        # Invalid task format
+        """
+        Here's the task breakdown:
+        Invalid task format
+        No proper numbering or structure
+        """
+    ]
+    
+    for response in malformed_responses:
+        mock_response = AsyncMock()
+        mock_response.content = response
+        dlpfc_agent.llm = AsyncMock()
+        dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
+        
+        result = await dlpfc_agent.process(test_state)
+        assert isinstance(result, dict)
+        assert "subtasks" in result
+        assert isinstance(result["subtasks"], list)
+        # Should handle malformed input gracefully
+        assert not result.get("error", False)
+
+@pytest.mark.asyncio
+async def test_complex_subtask_assignments(dlpfc_agent):
+    """Test parsing of complex subtask assignments with nested structure."""
+    complex_response = """
+    Task Breakdown:
+    1. Main Task A
+        1.1 Subtask A1 - Assign to VMPFC
+        1.2 Subtask A2 - Assign to OFC
+    2. Main Task B
+        2.1 Subtask B1
+            - First part - Assign to ACC
+            - Second part - Assign to MPFC
+        2.2 Subtask B2 - Assign to VMPFC
+    
+    Integration Steps:
+    1. Collect all subtask results
+    2. Analyze dependencies
+    3. Generate final report
+    """
+    
+    subtasks = await dlpfc_agent._parse_subtasks(complex_response)
+    assert isinstance(subtasks, list)
+    assert len(subtasks) > 0
+    
+    # Verify structure handling
+    tasks = [task["task"] for task in subtasks]
+    assert any("Main Task A" in task for task in tasks)
+    assert any("Subtask A1" in task for task in tasks)
+    assert any("Subtask B1" in task for task in tasks)
+    
+    # Verify agent assignments
+    agent_assignments = [task["agent"] for task in subtasks if task["agent"]]
+    assert "VMPFC" in agent_assignments
+    assert "OFC" in agent_assignments
+    assert "ACC" in agent_assignments
+    assert "MPFC" in agent_assignments
+
+@pytest.mark.asyncio
+async def test_invalid_feedback_history(dlpfc_agent):
+    """Test handling of invalid feedback history formats."""
+    invalid_histories = [
+        # Empty list
+        [],
+        # Missing required fields
+        [{"stage": "stage1"}],
+        # Invalid types
+        [{"stage": 123, "response": 456, "feedback": 789}],
+        # None values
+        [{"stage": None, "response": None, "feedback": None}],
+        # Extra fields
+        [{"stage": "stage1", "response": "resp1", "feedback": "feed1", "extra": "field"}]
+    ]
+    
+    for history in invalid_histories:
+        formatted = dlpfc_agent._format_feedback_history(history)
+        assert isinstance(formatted, str)
+        if not history:
+            assert formatted == "No previous feedback"
+        else:
+            assert "stage" in formatted.lower()
+            assert "response" in formatted.lower()
+            assert "feedback" in formatted.lower()
+
+@pytest.mark.asyncio
+async def test_concurrent_subtask_processing(dlpfc_agent):
+    """Test handling of concurrent subtask processing."""
+    mock_response = AsyncMock()
+    mock_response.content = """
+    Here's the task breakdown:
+    1. Parallel Task 1 - Assign to VMPFC
+    2. Parallel Task 2 - Assign to OFC
+    3. Parallel Task 3 - Assign to ACC
+    
+    All tasks can be processed concurrently.
+    """
+    
+    dlpfc_agent.llm = AsyncMock()
+    dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
+    
+    result = await dlpfc_agent.process({"task": "concurrent test"})
+    assert isinstance(result, dict)
+    assert "subtasks" in result
+    assert len(result["subtasks"]) == 3
+    
+    # Verify each task has proper assignment
+    agents = [task["agent"] for task in result["subtasks"] if task["agent"]]
+    assert len(agents) == 3
+    assert set(agents) == {"VMPFC", "OFC", "ACC"}
+
+@pytest.mark.asyncio
+async def test_response_formatting_edge_cases(dlpfc_agent):
+    """Test edge cases in response formatting."""
+    edge_case_responses = [
+        # Mixed formatting
+        """
+        **Task Breakdown:**
+        1. *Task 1* - Assign to VMPFC
+        2. __Task 2__ - Assign to OFC
+        
+        # Integration Plan
+        * Step 1
+        * Step 2
+        """,
+        # Unicode characters
+        """
+        📋 Tasks:
+        1️⃣ Task 1 - Assign to VMPFC
+        2️⃣ Task 2 - Assign to OFC
+        
+        🔄 Integration:
+        ⭐ Step 1
+        ⭐ Step 2
+        """,
+        # HTML-like formatting
+        """
+        <h1>Task Breakdown:</h1>
+        <ul>
+        <li>Task 1 - Assign to VMPFC</li>
+        <li>Task 2 - Assign to OFC</li>
+        </ul>
+        """
+    ]
+    
+    for response in edge_case_responses:
+        formatted = await dlpfc_agent._format_response(response)
+        assert isinstance(formatted, dict)
+        assert "response" in formatted
+        assert not formatted["error"]
+        assert isinstance(formatted["response"], str)
