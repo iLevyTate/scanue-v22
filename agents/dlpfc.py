@@ -51,8 +51,8 @@ class DLPFCAgent(BaseAgent):
             print(f"DLPFC Agent received response: {response}")  # Debug output
             
             # Parse response and update state
-            updated_state = self._format_response(response.content)
-            subtasks = self._parse_subtasks(response.content)
+            updated_state = await self._format_response(response.content)
+            subtasks = await self._parse_subtasks(response.content)
             
             print(f"Parsed subtasks: {subtasks}")  # Debug output
             
@@ -81,14 +81,8 @@ class DLPFCAgent(BaseAgent):
                 "stage": "error"
             }
     
-    def _parse_subtasks(self, response: str) -> List[Dict[str, Any]]:
-        """Parse the response to extract subtasks and their assignments.
-        
-        Returns a list of dictionaries containing:
-        - task: The task description
-        - agent: The assigned agent (if specified)
-        - category: The category of the task (subtask/integration)
-        """
+    async def _parse_subtasks(self, response: str) -> List[Dict[str, Any]]:
+        """Parse the response to extract subtasks and their assignments."""
         print(f"Parsing subtasks from response: {response}")
         
         try:
@@ -117,17 +111,27 @@ class DLPFCAgent(BaseAgent):
                     # Remove markdown formatting
                     task_text = task_text.replace('**', '').replace('*', '')
                     
+                    # Check for agent assignment in the same line
+                    agent = None
+                    if " - Assign to " in task_text:
+                        task_parts = task_text.split(" - Assign to ")
+                        task_text = task_parts[0].strip()
+                        agent = task_parts[1].strip()
+                    
                     if task_text:
                         current_subtask = {
                             "task": task_text,
                             "category": current_category or "general",
-                            "agent": None
+                            "agent": agent
                         }
                         subtasks.append(current_subtask)
                 
-                # Look for agent assignments
-                elif current_subtask and 'agent:' in line.lower():
-                    agent = line.split(':')[1].strip()
+                # Look for agent assignments in following lines
+                elif current_subtask and ('agent:' in line.lower() or 'assign to' in line.lower()):
+                    if 'agent:' in line.lower():
+                        agent = line.split(':')[1].strip()
+                    else:
+                        agent = line.split('assign to')[1].strip()
                     current_subtask["agent"] = agent.replace('**', '').replace('*', '')
             
             # Filter out any empty or invalid tasks
@@ -145,7 +149,7 @@ class DLPFCAgent(BaseAgent):
             print(f"Error parsing subtasks: {str(e)}")
             return [{"task": "Error parsing subtasks", "agent": "error", "category": "error"}]
 
-    def _format_response(self, response: str) -> Dict[str, Any]:
+    async def _format_response(self, response: str) -> Dict[str, Any]:
         """Format the response from the LLM into a structured output."""
         sections = {
             "subtasks": [],
