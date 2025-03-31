@@ -2,12 +2,35 @@ import asyncio
 import os
 import time
 import sys
+import json
 from typing import List
 from dotenv import load_dotenv
 from workflow import create_workflow, process_hitl_feedback
 
 # Load environment variables
 load_dotenv()
+
+# File to store persistent feedback history
+FEEDBACK_HISTORY_FILE = "feedback_history.json"
+
+def load_feedback_history():
+    """Load feedback history from a JSON file."""
+    try:
+        if os.path.exists(FEEDBACK_HISTORY_FILE):
+            with open(FEEDBACK_HISTORY_FILE, 'r') as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        print(f"Warning: Could not load feedback history: {str(e)}")
+        return []
+
+def save_feedback_history(feedback_history):
+    """Save feedback history to a JSON file."""
+    try:
+        with open(FEEDBACK_HISTORY_FILE, 'w') as f:
+            json.dump(feedback_history, f)
+    except Exception as e:
+        print(f"Warning: Could not save feedback history: {str(e)}")
 
 def print_thinking_animation(message: str, duration: int = 2):
     """Display a thinking animation with dots."""
@@ -52,6 +75,13 @@ async def main(args=None):
         # Initialize workflow
         workflow = create_workflow()
         
+        # Load persistent feedback history from file
+        feedback_history = load_feedback_history()
+        
+        # Print feedback history count if any exists
+        if feedback_history:
+            print(f"📚 Loaded {len(feedback_history)} previous feedback items")
+        
         while True:
             # Get task from command line args or user input
             if args and len(args) > 0:
@@ -71,7 +101,7 @@ async def main(args=None):
                 
             print("\n🧠 Starting cognitive processing pipeline...\n")
             
-            # Initial state
+            # Initial state - include existing feedback history
             state = {
                 "task": task,
                 "stage": "task_delegation",
@@ -79,7 +109,7 @@ async def main(args=None):
                 "subtasks": [],
                 "feedback": "",
                 "previous_response": "",
-                "feedback_history": [],
+                "feedback_history": feedback_history.copy(),  # Use the persistent feedback history
                 "error": False
             }
             
@@ -102,17 +132,17 @@ async def main(args=None):
                     feedback = input().strip()
                     if feedback:
                         print("\n🔄 Processing your feedback...")
-                        result = await workflow.ainvoke({
-                            **result,
+                        # Add feedback to history
+                        new_feedback = {
+                            "response": result["response"],
                             "feedback": feedback,
-                            "feedback_history": result.get("feedback_history", []) + [{
-                                "response": result["response"],
-                                "feedback": feedback,
-                                "stage": result.get("stage", "unknown")
-                            }],
-                            "stage": "task_delegation"  # Restart processing with feedback
-                        })
-                        print(f"\n✅ Updated result: {result['response']}")
+                            "stage": result.get("stage", "unknown")
+                        }
+                        feedback_history.append(new_feedback)
+                        # Save updated feedback history to file
+                        save_feedback_history(feedback_history)
+                        print("\n✅ Feedback stored for future queries.")
+                        
             except Exception as e:
                 print(f"\n❌ An error occurred: {str(e)}")
                 raise
