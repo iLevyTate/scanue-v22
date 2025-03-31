@@ -2,6 +2,8 @@
 
 [![DOI](https://zenodo.org/badge/893601857.svg)](https://doi.org/10.5281/zenodo.14510406)
 
+![SCANUE-V22Logo](https://github.com/user-attachments/assets/35f53dfa-5b63-4f5a-8fc2-643ddad8ab28)
+
 ## **Overview**
 SCANUE aims to develop AI-based extensions of the PFC by creating AI agents that simulate various PFC functions to assist in real-time cognitive tasks. Built using modern AI technologies, this project represents a significant step forward in cognitive augmentation and decision science.
 
@@ -18,6 +20,8 @@ For clarity:
 - **OFC Agent:** Reward processing and outcome evaluation
 - **ACC Agent:** Conflict detection and error monitoring
 - **MPFC Agent:** Value-based decision-making
+
+![SCANUE-V22Info](https://github.com/user-attachments/assets/d26044f7-ac85-44ea-b358-90b373bcf452)
 
 ## **Technical Requirements**
 - **Python:** 3.8+
@@ -70,49 +74,6 @@ pytest tests/
 ```
 
 ## **Architecture**
-
-### **Class Diagram**
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#f0f8ff', 'primaryBorderColor': '#4682b4', 'primaryTextColor': '#000080' }}}%%
-classDiagram
-    class BaseAgent {
-        <<abstract>>
-        +model_env_key: str
-        +llm: ChatOpenAI
-        +prompt: ChatPromptTemplate
-        +process(state: Dict)
-        #_create_prompt()
-        #_format_response()
-    }
-
-    class DLPFCAgent {
-        +process(state: Dict)
-        #_parse_subtasks()
-        #_format_feedback_history()
-    }
-
-    class VMPFCAgent {
-        +process(state: Dict)
-    }
-
-    class OFCAgent {
-        +process(state: Dict)
-    }
-
-    class ACCAgent {
-        +process(state: Dict)
-    }
-
-    class MPFCAgent {
-        +process(state: Dict)
-    }
-
-    BaseAgent <|-- DLPFCAgent
-    BaseAgent <|-- VMPFCAgent
-    BaseAgent <|-- OFCAgent
-    BaseAgent <|-- ACCAgent
-    BaseAgent <|-- MPFCAgent
-```
 
 ### **Data Flow Diagram**
 ```mermaid
