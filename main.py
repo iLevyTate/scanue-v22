@@ -90,23 +90,29 @@ async def main(args=None):
                     print(f"\n❌ {result['response']}")
                     continue
                     
-                # Handle feedback if required
-                if result.get("feedback_required"):
-                    print("\n📝 Would you like to provide feedback? (y/n)")
-                    feedback_choice = input().strip().lower()
+                # Always present the response and offer feedback option
+                print(f"\n✅ Result: {result['response']}")
                     
-                    if feedback_choice == "y":
-                        print("Please provide your feedback:")
-                        feedback = input().strip()
-                        if feedback:
-                            result = await workflow.ainvoke({
-                                **result,
+                # Always offer feedback option
+                print("\n📝 Would you like to provide feedback? (y/n)")
+                feedback_choice = input().strip().lower()
+                
+                if feedback_choice == "y":
+                    print("Please provide your feedback:")
+                    feedback = input().strip()
+                    if feedback:
+                        print("\n🔄 Processing your feedback...")
+                        result = await workflow.ainvoke({
+                            **result,
+                            "feedback": feedback,
+                            "feedback_history": result.get("feedback_history", []) + [{
+                                "response": result["response"],
                                 "feedback": feedback,
-                                "feedback_history": result.get("feedback_history", []) + [{
-                                    "response": result["response"],
-                                    "feedback": feedback
-                                }]
-                            })
+                                "stage": result.get("stage", "unknown")
+                            }],
+                            "stage": "task_delegation"  # Restart processing with feedback
+                        })
+                        print(f"\n✅ Updated result: {result['response']}")
             except Exception as e:
                 print(f"\n❌ An error occurred: {str(e)}")
                 raise
