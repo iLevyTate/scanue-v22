@@ -26,9 +26,17 @@ class DLPFCAgent(BaseAgent):
         
         Consider any feedback provided and adjust your approach accordingly.
         
+        You must only delegate subtasks to these specific brain region agents:
+        - VMPFC Agent: Ventromedial Prefrontal Cortex - Handles emotional regulation and risk assessment
+        - OFC Agent: Orbitofrontal Cortex - Processes rewards and evaluates outcomes
+        - ACC Agent: Anterior Cingulate Cortex - Detects conflicts and monitors for errors
+        - MPFC Agent: Medial Prefrontal Cortex - Makes value-based decisions
+        
+        DO NOT assign tasks to any other agent types like Agent A, Agent B, etc.
+        
         Provide:
         1. List of subtasks (incorporating feedback if relevant)
-        2. Agent assignments
+        2. Agent assignments (only to VMPFC, OFC, ACC, or MPFC agents)
         3. Integration plan
         """
         return ChatPromptTemplate.from_template(template)
@@ -91,6 +99,9 @@ class DLPFCAgent(BaseAgent):
             current_category = None
             current_subtask = None
             
+            # Standard brain region agent types
+            brain_region_agents = ["VMPFC", "OFC", "ACC", "MPFC"]
+            
             for line in lines:
                 line = line.strip()
                 if not line:
@@ -117,6 +128,16 @@ class DLPFCAgent(BaseAgent):
                         task_parts = task_text.split(" - Assign to ")
                         task_text = task_parts[0].strip()
                         agent = task_parts[1].strip()
+                    elif ":" in task_text and any(brain_agent in task_text.split(":")[0].upper() for brain_agent in brain_region_agents):
+                        # Handle format like "VMPFC: task description"
+                        agent_part = task_text.split(":")[0].strip().upper()
+                        task_text = ":".join(task_text.split(":")[1:]).strip()
+                        
+                        # Extract just the agent name
+                        for brain_agent in brain_region_agents:
+                            if brain_agent in agent_part:
+                                agent = f"{brain_agent} Agent"
+                                break
                     
                     if task_text:
                         current_subtask = {
@@ -132,7 +153,16 @@ class DLPFCAgent(BaseAgent):
                         agent = line.split(':')[1].strip()
                     else:
                         agent = line.split('assign to')[1].strip()
-                    current_subtask["agent"] = agent.replace('**', '').replace('*', '')
+                    
+                    # Ensure agent is one of the brain region agents
+                    agent_clean = agent.replace('**', '').replace('*', '')
+                    for brain_agent in brain_region_agents:
+                        if brain_agent in agent_clean.upper():
+                            current_subtask["agent"] = f"{brain_agent} Agent"
+                            break
+                    else:
+                        # Default to the most appropriate agent if none specified
+                        current_subtask["agent"] = "MPFC Agent"
             
             # Filter out any empty or invalid tasks
             subtasks = [task for task in subtasks if task["task"] and not task["task"].lower().startswith(('list', 'agent', 'integration'))]
@@ -142,12 +172,16 @@ class DLPFCAgent(BaseAgent):
                 print(f"- {task['category'].upper()}: {task['task']}")
                 if task['agent']:
                     print(f"  Assigned to: {task['agent']}")
+                else:
+                    # Assign default agent if none specified
+                    task['agent'] = "MPFC Agent"
+                    print(f"  Defaulted to: {task['agent']}")
             
             return subtasks
             
         except Exception as e:
             print(f"Error parsing subtasks: {str(e)}")
-            return [{"task": "Error parsing subtasks", "agent": "error", "category": "error"}]
+            return [{"task": "Error parsing subtasks", "agent": "MPFC Agent", "category": "error"}]
 
     async def _format_response(self, response: str) -> Dict[str, Any]:
         """Format the response from the LLM into a structured output."""
@@ -196,15 +230,26 @@ class DLPFCAgent(BaseAgent):
                 for step in sections["integration"]:
                     formatted_response.append(f"  • {step}")
             
+            # Create structured response in JSON format
+            response_text = "\n".join(formatted_response)
+            structured_response = {
+                "role": "assistant",
+                "content": response_text
+            }
+            
             return {
-                "response": "\n".join(formatted_response),
+                "response": structured_response,
                 "error": False
             }
             
         except Exception as e:
             print(f"Error formatting response: {str(e)}")
+            structured_error = {
+                "role": "assistant", 
+                "content": str(e)
+            }
             return {
-                "response": str(e),
+                "response": structured_error,
                 "error": True
             }
 

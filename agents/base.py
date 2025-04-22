@@ -86,7 +86,13 @@ class BaseAgent(ABC):
     
     def _format_response(self, response: str) -> Dict[str, Any]:
         """Format the response from the LLM."""
+        # Format response in the required JSON structure
+        structured_response = {
+            "role": "assistant",
+            "content": response
+        }
+        
         return {
-            "response": response,
+            "response": structured_response,
             "error": False
         }
