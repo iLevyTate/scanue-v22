@@ -117,11 +117,15 @@ async def main(args=None):
             try:
                 result = await workflow.ainvoke(state)
                 if result.get("error"):
-                    print(f"\n❌ {result['response']}")
+                    error_content = result['response']['content'] if isinstance(result['response'], dict) and 'content' in result['response'] else result['response']
+                    print(f"\n❌ {error_content}")
                     continue
+                
+                # Extract content from structured response
+                response_content = result['response']['content'] if isinstance(result['response'], dict) and 'content' in result['response'] else result['response']
                     
                 # Always present the response and offer feedback option
-                print(f"\n✅ Result: {result['response']}")
+                print(f"\n✅ Result: {response_content}")
                     
                 # Always offer feedback option
                 print("\n📝 Would you like to provide feedback? (y/n)")
@@ -132,9 +136,9 @@ async def main(args=None):
                     feedback = input().strip()
                     if feedback:
                         print("\n🔄 Processing your feedback...")
-                        # Add feedback to history
+                        # Add feedback to history - store the content for display
                         new_feedback = {
-                            "response": result["response"],
+                            "response": response_content,  # Store just the content, not the full structure
                             "feedback": feedback,
                             "stage": result.get("stage", "unknown")
                         }
