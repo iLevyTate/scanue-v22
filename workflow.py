@@ -31,14 +31,16 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with timeout_context():
             result = await asyncio.wait_for(dlpfc.process(state), timeout=30.0)
-            print(f" Task delegation complete: {result.get('response', '')}")
+            print(f" Task delegation complete: {result.get('response', {}).get('content', '')}")
         return {**state, **result, "stage": "emotional_regulation"}
     except (TimeoutError, KeyboardInterrupt) as e:
         print(f" Task delegation error: {str(e)}")
-        return {**state, "error": True, "response": str(e), "stage": END}
+        error_response = {"role": "assistant", "content": str(e)}
+        return {**state, "error": True, "response": error_response, "stage": END}
     except Exception as e:
         print(f" Task delegation error: {str(e)}")
-        return {**state, "error": True, "response": f"Error in task delegation: {str(e)}", "stage": END}
+        error_response = {"role": "assistant", "content": f"Error in task delegation: {str(e)}"}
+        return {**state, "error": True, "response": error_response, "stage": END}
 
 async def process_emotional_regulation(state: Dict[str, Any]) -> Dict[str, Any]:
     """Process emotional regulation through VMPFC agent."""
@@ -47,14 +49,16 @@ async def process_emotional_regulation(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with timeout_context():
             result = await asyncio.wait_for(vmpfc.process(state), timeout=30.0)
-            print(f" Emotional analysis complete: {result.get('response', '')}")
+            print(f" Emotional analysis complete: {result.get('response', {}).get('content', '')}")
         return {**state, **result, "stage": "reward_processing"}
     except (TimeoutError, KeyboardInterrupt) as e:
         print(f" Emotional regulation error: {str(e)}")
-        return {**state, "error": True, "response": str(e), "stage": END}
+        error_response = {"role": "assistant", "content": str(e)}
+        return {**state, "error": True, "response": error_response, "stage": END}
     except Exception as e:
         print(f" Emotional regulation error: {str(e)}")
-        return {**state, "error": True, "response": f"Error in emotional regulation: {str(e)}", "stage": END}
+        error_response = {"role": "assistant", "content": f"Error in emotional regulation: {str(e)}"}
+        return {**state, "error": True, "response": error_response, "stage": END}
 
 async def process_reward_processing(state: Dict[str, Any]) -> Dict[str, Any]:
     """Process reward processing through OFC agent."""
@@ -63,14 +67,16 @@ async def process_reward_processing(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with timeout_context():
             result = await asyncio.wait_for(ofc.process(state), timeout=30.0)
-            print(f" Reward analysis complete: {result.get('response', '')}")
+            print(f" Reward analysis complete: {result.get('response', {}).get('content', '')}")
         return {**state, **result, "stage": "conflict_detection"}
     except (TimeoutError, KeyboardInterrupt) as e:
         print(f" Reward processing error: {str(e)}")
-        return {**state, "error": True, "response": str(e), "stage": END}
+        error_response = {"role": "assistant", "content": str(e)}
+        return {**state, "error": True, "response": error_response, "stage": END}
     except Exception as e:
         print(f" Reward processing error: {str(e)}")
-        return {**state, "error": True, "response": f"Error in reward processing: {str(e)}", "stage": END}
+        error_response = {"role": "assistant", "content": f"Error in reward processing: {str(e)}"}
+        return {**state, "error": True, "response": error_response, "stage": END}
 
 async def process_conflict_detection(state: Dict[str, Any]) -> Dict[str, Any]:
     """Process conflict detection through ACC agent."""
@@ -79,14 +85,16 @@ async def process_conflict_detection(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with timeout_context():
             result = await asyncio.wait_for(acc.process(state), timeout=30.0)
-            print(f" Conflict detection complete: {result.get('response', '')}")
+            print(f" Conflict detection complete: {result.get('response', {}).get('content', '')}")
         return {**state, **result, "stage": "value_assessment"}
     except (TimeoutError, KeyboardInterrupt) as e:
         print(f" Conflict detection error: {str(e)}")
-        return {**state, "error": True, "response": str(e), "stage": END}
+        error_response = {"role": "assistant", "content": str(e)}
+        return {**state, "error": True, "response": error_response, "stage": END}
     except Exception as e:
         print(f" Conflict detection error: {str(e)}")
-        return {**state, "error": True, "response": f"Error in conflict detection: {str(e)}", "stage": END}
+        error_response = {"role": "assistant", "content": f"Error in conflict detection: {str(e)}"}
+        return {**state, "error": True, "response": error_response, "stage": END}
 
 async def process_value_assessment(state: Dict[str, Any]) -> Dict[str, Any]:
     """Process value assessment through MPFC agent."""
@@ -95,14 +103,16 @@ async def process_value_assessment(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with timeout_context():
             result = await asyncio.wait_for(mpfc.process(state), timeout=30.0)
-            print(f" Value assessment complete: {result.get('response', '')}")
+            print(f" Value assessment complete: {result.get('response', {}).get('content', '')}")
         return {**state, **result, "stage": END}
     except (TimeoutError, KeyboardInterrupt) as e:
         print(f" Value assessment error: {str(e)}")
-        return {**state, "error": True, "response": str(e), "stage": END}
+        error_response = {"role": "assistant", "content": str(e)}
+        return {**state, "error": True, "response": error_response, "stage": END}
     except Exception as e:
         print(f" Value assessment error: {str(e)}")
-        return {**state, "error": True, "response": f"Error in value assessment: {str(e)}", "stage": END}
+        error_response = {"role": "assistant", "content": f"Error in value assessment: {str(e)}"}
+        return {**state, "error": True, "response": error_response, "stage": END}
 
 def create_workflow() -> StateGraph:
     """Create the workflow graph."""
@@ -157,11 +167,14 @@ def process_hitl_feedback(state: Dict[str, Any], feedback: str) -> Dict[str, Any
     if not state.get("feedback_history"):
         state["feedback_history"] = []
     
+    # Extract content from the response if it's structured
+    response_content = state["response"]["content"] if isinstance(state.get("response"), dict) and "content" in state["response"] else state.get("response", "")
+    
     state["feedback_history"].append({
-        "response": state.get("response", ""),
+        "response": response_content,
         "feedback": feedback
     })
     state["feedback"] = feedback
-    state["previous_response"] = state.get("response", "")
+    state["previous_response"] = response_content
     
     return state
