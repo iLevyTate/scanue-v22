@@ -230,15 +230,26 @@ class DLPFCAgent(BaseAgent):
                 for step in sections["integration"]:
                     formatted_response.append(f"  • {step}")
             
+            # Create structured response in JSON format
+            response_text = "\n".join(formatted_response)
+            structured_response = {
+                "role": "assistant",
+                "content": response_text
+            }
+            
             return {
-                "response": "\n".join(formatted_response),
+                "response": structured_response,
                 "error": False
             }
             
         except Exception as e:
             print(f"Error formatting response: {str(e)}")
+            structured_error = {
+                "role": "assistant", 
+                "content": str(e)
+            }
             return {
-                "response": str(e),
+                "response": structured_error,
                 "error": True
             }
 
