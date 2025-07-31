@@ -67,18 +67,37 @@ async def test_app_initialization(mock_env_vars, mock_workflow):
     with patch("main.create_workflow", return_value=mock_workflow):
         with patch("main.load_feedback_history", return_value=[]):
             with patch("builtins.input", side_effect=["test task", "n", "exit"]):
-                await main()
-                # Verify ainvoke was called with the correct task and empty feedback history
-                mock_workflow.ainvoke.assert_called_with({
+                # Mock session log creation to ensure consistent test results
+                mock_session = {
                     "task": "test task",
-                    "stage": "task_delegation",
-                    "response": "",
-                    "subtasks": [],
-                    "feedback": "",
-                    "previous_response": "",
-                    "feedback_history": [],
-                    "error": False
-                })
+                    "timestamp": "2023-01-01T00:00:00.000000",
+                    "session_id": "test-session-id",
+                    "stages": [],
+                    "final_response": None,
+                    "user_feedback": None,
+                    "error": None,
+                    "completed": False
+                }
+                with patch("main.create_session_log", return_value=mock_session):
+                    # Mock save_session_log to avoid creating real files during tests
+                    with patch("main.save_session_log", return_value="test_log_file.json"):
+                        await main()
+                        
+                        # Create the expected state dict with session_log
+                        expected_state = {
+                            "task": "test task",
+                            "stage": "task_delegation",
+                            "response": "",
+                            "subtasks": [],
+                            "feedback": "",
+                            "previous_response": "",
+                            "feedback_history": [],
+                            "session_log": mock_session,
+                            "error": False
+                        }
+                        
+                        # Verify ainvoke was called with the correct state including session_log
+                        mock_workflow.ainvoke.assert_called_with(expected_state)
 
 @pytest.mark.asyncio
 async def test_empty_task_handling(mock_env_vars, mock_workflow, capsys):
@@ -96,29 +115,44 @@ async def test_feedback_processing(mock_env_vars):
     # Create a mock workflow that returns a success response
     mock_workflow = AsyncMock()
     mock_workflow.ainvoke = AsyncMock(return_value={
-        "response": "Test response",
+        "response": {"role": "assistant", "content": "Test response"},
         "stage": "__end__",
         "error": False
     })
+    
+    # Mock session log creation to ensure consistent test results
+    mock_session = {
+        "task": "test task",
+        "timestamp": "2023-01-01T00:00:00.000000",
+        "session_id": "test-session-id",
+        "stages": [],
+        "final_response": None,
+        "user_feedback": None,
+        "error": None,
+        "completed": False
+    }
     
     # Mock load_feedback_history to return an empty list
     with patch("main.create_workflow", return_value=mock_workflow):
         with patch("main.load_feedback_history", return_value=[]):
             # Mock save_feedback_history
             with patch("main.save_feedback_history") as mock_save:
-                with patch('builtins.input', side_effect=["test task", "y", "Test feedback", "exit"]):
-                    await main()
-        
-                    # Verify ainvoke was called once for the task
-                    assert mock_workflow.ainvoke.call_count >= 1
-        
-                    # Verify save_feedback_history was called once
-                    assert mock_save.call_count == 1
-                    
-                    # Check the feedback data structure passed to save_feedback_history
-                    feedback_history = mock_save.call_args[0][0]
-                    assert len(feedback_history) == 1
-                    assert feedback_history[0]['feedback'] == 'Test feedback'
+                # Mock session log functions
+                with patch("main.create_session_log", return_value=mock_session):
+                    with patch("main.save_session_log", return_value="test_log_file.json"):
+                        with patch('builtins.input', side_effect=["test task", "y", "Test feedback", "exit"]):
+                            await main()
+            
+                            # Verify ainvoke was called once for the task
+                            assert mock_workflow.ainvoke.call_count >= 1
+            
+                            # Verify save_feedback_history was called once
+                            assert mock_save.call_count == 1
+                            
+                            # Check the feedback data structure passed to save_feedback_history
+                            feedback_history = mock_save.call_args[0][0]
+                            assert len(feedback_history) == 1
+                            assert feedback_history[0]['feedback'] == 'Test feedback'
 
 @pytest.mark.asyncio
 async def test_error_handling(mock_env_vars):
