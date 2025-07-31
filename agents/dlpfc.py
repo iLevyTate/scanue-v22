@@ -254,12 +254,25 @@ class DLPFCAgent(BaseAgent):
             }
 
     def _format_feedback_history(self, history: List[Dict[str, str]]) -> str:
-        """Format feedback history for prompt."""
+        """Format feedback history for HITL integration into agent prompts.
+        
+        This method processes the persistent feedback history to provide context
+        about user preferences and system performance from previous sessions.
+        The formatted history informs the agent's decision-making process and
+        helps maintain consistency with user expectations.
+        
+        Args:
+            history: List of feedback entries from previous interactions
+            
+        Returns:
+            str: Formatted feedback history string for prompt integration
+        """
         if not history:
             return "No previous feedback"
         
         formatted = []
         for entry in history:
+            # STRUCTURED FEEDBACK: Format each entry with context for agent understanding
             formatted.append(
                 f"Stage: {entry.get('stage', 'unknown')}\n"
                 f"Response: {entry.get('response', '')}\n"

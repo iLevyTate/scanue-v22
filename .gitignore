@@ -161,3 +161,5 @@ cython_debug/
 
 # SCANUE-V specific files
 feedback_history.json
+@feedback_history.json
+logs/
