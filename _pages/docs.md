@@ -85,9 +85,7 @@ workflow = setup_hitl_workflow()
 result = workflow.execute_with_feedback(input_data)
 ```
 
-## API Reference
 
-For detailed API documentation, see the [API Reference](/api/) section.
 
 ## Additional Resources
 

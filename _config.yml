@@ -19,14 +19,13 @@ description: "Simulates prefrontal cortex functions through specialized AI agent
 url: "https://ilevytate.github.io"
 baseurl: "/scanue-v22"
 repository: "iLevyTate/scanue-v22"
-teaser: "/assets/images/teaser.jpg" # path of fallback teaser image
-logo: "/assets/images/logo.png" # path of site logo
+# teaser: "/assets/images/teaser.jpg" # path of fallback teaser image
+# logo: "/assets/images/logo.png" # path of site logo
 masthead_title: # overrides the website title displayed in the masthead, use " " for no title
 
 # Site Author
 author:
   name: "iLevyTate"
-  avatar: "/assets/images/bio-photo.jpg"
   bio: "Developer of brain-inspired AI systems specializing in prefrontal cortex simulation and cognitive augmentation."
   links:
     - label: "GitHub"

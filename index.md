@@ -7,32 +7,25 @@ excerpt: "A sophisticated multi-agent system leveraging LangGraph for complex wo
 header:
   overlay_color: "#000"
   overlay_filter: "0.5"
-  overlay_image: /assets/images/header-bg.jpg
   actions:
     - label: "View on GitHub"
       url: "https://github.com/iLevyTate/scanue-v22"
     - label: "Documentation"
       url: "/docs/"
 feature_row:
-  - image_path: /assets/images/agents-feature.jpg
-    alt: "Multi-Agent System"
-    title: "Intelligent Agents"
+  - title: "Intelligent Agents"
     excerpt: "Specialized agents for different cognitive functions including DLPFC and task-specific processing."
     url: "/agents/"
     btn_label: "Learn More"
     btn_class: "btn--primary"
-  - image_path: /assets/images/workflow-feature.jpg
-    alt: "Workflow Orchestration"
-    title: "LangGraph Workflows"
+  - title: "LangGraph Workflows"
     excerpt: "Advanced workflow orchestration with state management and conditional routing."
     url: "/workflow/"
     btn_label: "Learn More"
     btn_class: "btn--primary"
-  - image_path: /assets/images/hitl-feature.jpg
-    alt: "Human-in-the-Loop"
-    title: "Human-in-the-Loop"
+  - title: "Human-in-the-Loop"
     excerpt: "Seamless integration of human feedback and decision-making in automated workflows."
-    url: "/human-in-the-loop/"
+    url: "/workflow/"
     btn_label: "Learn More"
     btn_class: "btn--primary"
 ---
@@ -75,6 +68,3 @@ The project is organized into several key components:
 - **`workflow.py`** - Main workflow orchestration logic
 - **`main.py`** - Entry point for the application
 
-### Latest Updates
-
-Check out our [latest posts](/posts/) for updates on development, new features, and technical insights into the SCANUE v22 system.
