@@ -1,0 +1,43 @@
+# Main navigation links
+main:
+  - title: "Home"
+    url: /
+  - title: "Documentation"
+    url: /docs/
+  - title: "Agents"
+    url: /agents/
+  - title: "Workflow"
+    url: /workflow/
+  - title: "API Reference"
+    url: /api/
+  - title: "Posts"
+    url: /posts/
+  - title: "About"
+    url: /about/
+
+# Documentation navigation
+docs:
+  - title: Getting Started
+    children:
+      - title: "Quick Start Guide"
+        url: /docs/quick-start-guide/
+      - title: "Installation"
+        url: /docs/installation/
+      - title: "Configuration"
+        url: /docs/configuration/
+  - title: Architecture
+    children:
+      - title: "System Overview"
+        url: /docs/system-overview/
+      - title: "Agent Design"
+        url: /docs/agent-design/
+      - title: "Workflow Engine"
+        url: /docs/workflow-engine/
+  - title: Development
+    children:
+      - title: "Contributing"
+        url: /docs/contributing/
+      - title: "Testing"
+        url: /docs/testing/
+      - title: "Debugging"
+        url: /docs/debugging/
