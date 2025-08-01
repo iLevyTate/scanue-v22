@@ -36,8 +36,8 @@ For clarity:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-repo/SCANUE-V22.git
-   cd SCANUE-V22
+   git clone https://github.com/iLevyTate/scanue-v22.git
+   cd scanue-v22
    ```
 
 2. **Install dependencies:**
@@ -71,107 +71,16 @@ pytest tests/
 
 ## **Architecture**
 
-### **Class Diagram**
-```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#f0f8ff', 'primaryBorderColor': '#4682b4', 'primaryTextColor': '#000080' }}}%%
-classDiagram
-    class BaseAgent {
-        <<abstract>>
-        +model_env_key: str
-        +llm: ChatOpenAI
-        +prompt: ChatPromptTemplate
-        +process(state: Dict)
-        #_create_prompt()
-        #_format_response()
-    }
+SCANUE v22 implements a multi-agent architecture where specialized AI agents simulate different regions of the prefrontal cortex:
 
-    class DLPFCAgent {
-        +process(state: Dict)
-        #_parse_subtasks()
-        #_format_feedback_history()
-    }
+- **BaseAgent**: Abstract base class providing common functionality for all agents
+- **DLPFCAgent**: Executive control and task delegation
+- **VMPFCAgent**: Emotional regulation and risk assessment  
+- **OFCAgent**: Reward processing and outcome evaluation
+- **ACCAgent**: Conflict detection and error monitoring
+- **MPFCAgent**: Value-based decision-making
 
-    class VMPFCAgent {
-        +process(state: Dict)
-    }
-
-    class OFCAgent {
-        +process(state: Dict)
-    }
-
-    class ACCAgent {
-        +process(state: Dict)
-    }
-
-    class MPFCAgent {
-        +process(state: Dict)
-    }
-
-    BaseAgent <|-- DLPFCAgent
-    BaseAgent <|-- VMPFCAgent
-    BaseAgent <|-- OFCAgent
-    BaseAgent <|-- ACCAgent
-    BaseAgent <|-- MPFCAgent
-```
-
-### **Data Flow Diagram**
-```mermaid
-%%{init: {'flowchart': {'defaultRenderer': 'elk'}, 'themeVariables': { 'primaryColor': '#e0ffe0', 'primaryBorderColor': '#32cd32', 'primaryTextColor': '#006400' }}}%%
-flowchart TB
-    subgraph UserInteraction
-        A[User Input] --> B[Task Description]
-        Y[System Response] --> Z[User Feedback]
-    end
-
-    subgraph CoreProcessing
-        C[DLPFC Agent] -->|Task Delegation| D[Task Breakdown]
-        D -->|Parallel Processing| E[Specialized Agents]
-    end
-
-    subgraph SpecializedProcessing
-        E -->|Emotional| F[VMPFC Agent]
-        E -->|Reward| G[OFC Agent]
-        E -->|Conflict| H[ACC Agent]
-        E -->|Value| I[MPFC Agent]
-    end
-
-    subgraph ResultIntegration
-        F & G & H & I -->|Results| J[Integration]
-        J -->|Final Output| K[Response Generation]
-    end
-
-    B -->|Input| C
-    K -->|Output| Y
-    Z -->|Feedback Loop| C
-```
-
-### **User Interaction Flow**
-```mermaid
-%%{init: {'flowchart': {'defaultRenderer': 'elk'}, 'themeVariables': { 'primaryColor': '#fffacd', 'primaryBorderColor': '#ffd700', 'primaryTextColor': '#b8860b' }}}%%
-sequenceDiagram
-    participant U as User
-    participant D as DLPFC Agent
-    participant S as Specialized Agents
-    participant I as Integration
-
-    U->>D: Submit Task
-    activate D
-    D->>D: Parse Task
-    D->>S: Delegate Subtasks
-    activate S
-    S->>S: Process Subtasks
-    S->>I: Send Results
-    deactivate S
-    activate I
-    I->>I: Integrate Results
-    I->>U: Present Response
-    deactivate I
-    U->>D: Provide Feedback
-    D->>D: Update State
-    deactivate D
-
-    Note over U,I: Feedback Loop Continues
-```
+The system uses a hierarchical processing model where the DLPFC Agent coordinates task delegation to specialized agents, which then process their respective cognitive aspects before integrating results for the final response.
 
 ## **License**
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

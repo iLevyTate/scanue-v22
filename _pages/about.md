@@ -56,9 +56,8 @@ Comprehensive debugging utilities help developers understand system behavior and
 If you need assistance with SCANUE v22:
 
 1. Check the [documentation](/docs/)
-2. Browse the [API reference](/api/)
-3. Review existing [issues](https://github.com/iLevyTate/scanue-v22/issues)
-4. Create a new issue if needed
+2. Review existing [issues](https://github.com/iLevyTate/scanue-v22/issues)
+3. Create a new issue if needed
 
 ## Contributing
 

@@ -8,10 +8,6 @@ main:
     url: /agents/
   - title: "Workflow"
     url: /workflow/
-  - title: "API Reference"
-    url: /api/
-  - title: "Posts"
-    url: /posts/
   - title: "About"
     url: /about/
 
