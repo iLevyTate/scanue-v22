@@ -2,6 +2,8 @@
 
 [![DOI](https://zenodo.org/badge/893601857.svg)](https://doi.org/10.5281/zenodo.14510406)
 
+![SCANUE-V22Logo](https://github.com/user-attachments/assets/35f53dfa-5b63-4f5a-8fc2-643ddad8ab28)
+
 ## **Overview**
 SCANUE aims to develop AI-based extensions of the PFC by creating AI agents that simulate various PFC functions to assist in real-time cognitive tasks. Built using modern AI technologies, this project represents a significant step forward in cognitive augmentation and decision science.
 
@@ -18,6 +20,8 @@ For clarity:
 - **OFC Agent:** Reward processing and outcome evaluation
 - **ACC Agent:** Conflict detection and error monitoring
 - **MPFC Agent:** Value-based decision-making
+
+![SCANUE-V22Info](https://github.com/user-attachments/assets/d26044f7-ac85-44ea-b358-90b373bcf452)
 
 ## **Technical Requirements**
 - **Python:** 3.8+
@@ -70,15 +74,6 @@ pytest tests/
 ```
 
 ## **Architecture**
-
-SCANUE v22 implements a multi-agent architecture where specialized AI agents simulate different regions of the prefrontal cortex:
-
-- **BaseAgent**: Abstract base class providing common functionality for all agents
-- **DLPFCAgent**: Executive control and task delegation
-- **VMPFCAgent**: Emotional regulation and risk assessment  
-- **OFCAgent**: Reward processing and outcome evaluation
-- **ACCAgent**: Conflict detection and error monitoring
-- **MPFCAgent**: Value-based decision-making
 
 The system uses a hierarchical processing model where the DLPFC Agent coordinates task delegation to specialized agents, which then process their respective cognitive aspects before integrating results for the final response.
 
