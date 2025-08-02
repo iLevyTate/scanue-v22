@@ -90,9 +90,9 @@ def log_stage_end(stage_log: Dict, result: Dict[str, Any], error: str = None) ->
 def parse_agent_assignments(dlpfc_response: str) -> list:
     """Parse the DLPFC agent's response to extract which agents should be called.
     
-    This function analyzes the DLPFC's task delegation output to determine which
-    specialized agents should be invoked for the current task. It looks for explicit
-    agent mentions and falls back to a default sequence if none are specified.
+    This function intelligently analyzes the DLPFC's task delegation output using
+    multiple parsing strategies to determine which specialized agents are needed.
+    It prioritizes structured format parsing and falls back to semantic analysis.
     
     Args:
         dlpfc_response: The raw text response from the DLPFC agent
@@ -110,41 +110,108 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
         'MPFC': 'value_assessment'
     }
     
-    # Look for agent assignments in the response
     response_lower = dlpfc_response.lower()
     
-    # Check for explicit agent mentions
+    print(f"🔍 DLPFC Response Preview: {response_lower[:200]}...")
+    
+    # STRATEGY 1: Parse structured format (YES/NO responses)
+    structured_found = False
     for agent_name, stage_name in agent_map.items():
-        patterns = [
-            f"{agent_name.lower()} agent",
-            f"{agent_name.lower()}:",
-            f"assign.*{agent_name.lower()}",
-            f"delegate.*{agent_name.lower()}",
-            f"{agent_name.lower()}.*agent"
+        # Look for "- VMPFC Agent: YES" pattern
+        yes_patterns = [
+            rf"- {agent_name.lower()} agent:\s*yes",
+            rf"{agent_name.lower()} agent:\s*yes",
+            rf"- {agent_name.lower()}:\s*yes"
         ]
         
-        for pattern in patterns:
+        for pattern in yes_patterns:
             if re.search(pattern, response_lower):
                 if stage_name not in agent_assignments:
                     agent_assignments.append(stage_name)
+                    structured_found = True
+                    print(f"✅ Structured format: {agent_name} → {stage_name}")
                 break
     
-    # If no specific agents are mentioned, use default sequence
-    if not agent_assignments:
-        # Default to calling all agents in logical order - this ensures comprehensive
-        # cognitive processing even when DLPFC doesn't specify particular agents
-        agent_assignments = [
-            'emotional_regulation',  # VMPFC: Risk assessment and emotional processing
-            'reward_processing',     # OFC: Outcome evaluation and reward prediction
-            'conflict_detection',    # ACC: Conflict monitoring and resolution
-            'value_assessment'       # MPFC: Final integration and decision making
-        ]
+    # STRATEGY 2: Semantic keyword analysis (if structured format not found)
+    if not structured_found:
+        print("🔍 Using semantic analysis fallback...")
+        
+        # Enhanced semantic patterns for each agent
+        semantic_patterns = {
+            'VMPFC': ['emotional', 'feeling', 'social', 'moral', 'risk', 'anxiety', 'fear', 'empathy', 'interpersonal'],
+            'OFC': ['reward', 'benefit', 'cost', 'outcome', 'trade', 'financial', 'profit', 'loss', 'value', 'worth'],
+            'ACC': ['conflict', 'error', 'mistake', 'competing', 'contradiction', 'monitor', 'attention', 'focus'],
+            'MPFC': []  # Always included
+        }
+        
+        for agent_name, keywords in semantic_patterns.items():
+            if agent_name == 'MPFC':  # Always include MPFC
+                continue
+                
+            # Check if any semantic keywords are present
+            for keyword in keywords:
+                if keyword in response_lower:
+                    stage_name = agent_map[agent_name]
+                    if stage_name not in agent_assignments:
+                        agent_assignments.append(stage_name)
+                        print(f"🧠 Semantic match: '{keyword}' → {agent_name} → {stage_name}")
+                    break
     
-    # Always include value_assessment (MPFC) as the final stage for integration
-    # MPFC serves as the integration hub that synthesizes insights from all other agents
+    # STRATEGY 3: Original pattern matching (final fallback)
+    if not agent_assignments and not structured_found:
+        print("🔍 Using original pattern matching...")
+        for agent_name, stage_name in agent_map.items():
+            patterns = [
+                f"{agent_name.lower()} agent",
+                f"{agent_name.lower()}:",
+                f"assign.*{agent_name.lower()}",
+                f"delegate.*{agent_name.lower()}",
+                f"{agent_name.lower()}.*agent"
+            ]
+            
+            for pattern in patterns:
+                if re.search(pattern, response_lower):
+                    if stage_name not in agent_assignments:
+                        agent_assignments.append(stage_name)
+                        print(f"🎯 Pattern match: '{pattern}' → {agent_name} → {stage_name}")
+                    break
+    
+    # INTELLIGENT FALLBACK: Use minimal viable agents instead of all agents
+    if not agent_assignments:
+        print("⚠️ No specific agents detected, using intelligent minimal fallback...")
+        
+        # Analyze task complexity for intelligent fallback
+        complexity_indicators = ['complex', 'difficult', 'multiple', 'various', 'several', 'many', 'challenging']
+        emotional_indicators = ['feel', 'emotion', 'relationship', 'social', 'personal', 'family', 'friend']
+        decision_indicators = ['decide', 'choice', 'option', 'should', 'better', 'prefer', 'recommend']
+        
+        is_complex = any(word in response_lower for word in complexity_indicators)
+        has_emotional = any(word in response_lower for word in emotional_indicators)
+        is_decision = any(word in response_lower for word in decision_indicators)
+        
+        if is_complex:
+            # Complex tasks get full processing
+            agent_assignments = ['emotional_regulation', 'reward_processing', 'conflict_detection', 'value_assessment']
+            print("📊 Complex task detected → Full cognitive processing")
+        elif has_emotional:
+            # Emotional tasks get VMPFC + MPFC
+            agent_assignments = ['emotional_regulation', 'value_assessment']
+            print("❤️ Emotional task detected → VMPFC + MPFC")
+        elif is_decision:
+            # Decision tasks get OFC + MPFC  
+            agent_assignments = ['reward_processing', 'value_assessment']
+            print("🎯 Decision task detected → OFC + MPFC")
+        else:
+            # Simple tasks get only MPFC
+            agent_assignments = ['value_assessment']
+            print("⚡ Simple task detected → MPFC only")
+    
+    # Always ensure MPFC is included as the final integration stage
     if 'value_assessment' not in agent_assignments:
         agent_assignments.append('value_assessment')
+        print("🔗 Added MPFC for final integration")
     
+    print(f"📋 Final agent delegation: {agent_assignments}")
     return agent_assignments
 
 async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
