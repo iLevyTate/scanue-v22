@@ -7,13 +7,21 @@ from agents.base import BaseAgent # Import BaseAgent for type hinting
 
 @pytest.fixture
 def mock_env_vars():
+    # Mock ConfigLoader to avoid reading real config file and return expected test models
+    def mock_get_agent_config(agent_name):
+        return {
+            "models": {
+                "primary": {"provider": "openai", "name": f"{agent_name.lower()}-model"}
+            }
+        }
+
     with patch.dict("os.environ", {
         "VMPFC_MODEL": "vmpfc-model",
         "OFC_MODEL": "ofc-model",
         "ACC_MODEL": "acc-model",
         "MPFC_MODEL": "mpfc-model",
         "OPENAI_API_KEY": "test-key"
-    }):
+    }), patch("utils.config.ConfigLoader.get_agent_config", side_effect=mock_get_agent_config):
         yield
 
 @pytest.fixture
@@ -54,7 +62,8 @@ async def test_specialized_agent_process(agent_class: Type[BaseAgent], mock_env_
     assert isinstance(result, dict)
     assert "response" in result
     # Ensure the mock response content is checked
-    assert result["response"] == "test response"
+    # response is now a dict: {'role': 'assistant', 'content': 'test response'}
+    assert result["response"]["content"] == "test response"
     assert not result.get("error", False)
 
 @pytest.mark.asyncio
@@ -68,8 +77,10 @@ async def test_agent_error_handling(mock_env_vars, test_state):
             result = await agent.process(test_state)
             assert result["error"] # Check if the agent correctly flagged the error
             # Optionally, check if the error message is propagated
-            assert "error" in result["response"].lower()
-            assert "Test error" in result["response"] # Be more specific if possible
+            # Handle structured response
+            response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+            assert "error" in response_text.lower()
+            assert "Test error" in response_text # Be more specific if possible
 
 @pytest.mark.asyncio
 async def test_agent_timeout_handling(mock_env_vars, test_state):
@@ -80,8 +91,12 @@ async def test_agent_timeout_handling(mock_env_vars, test_state):
         with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.TimeoutError("Request timed out. Please try again.")):
             result = await agent.process(test_state)
             assert result["error"]
-            assert "timed out" in result["response"].lower()
-            assert "Request timed out" in result["response"]
+            # Handle structured response
+            response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+            assert "timed out" in response_text.lower()
+            # The exact message might be wrapped or changed by BaseAgent error handler
+            # BaseAgent returns: "Request timed out. Please try again."
+            assert "Request timed out" in response_text
 
 @pytest.mark.asyncio
 async def test_agent_cancellation_handling(mock_env_vars, test_state):
@@ -92,7 +107,9 @@ async def test_agent_cancellation_handling(mock_env_vars, test_state):
         with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError("Test cancellation")):
             result = await agent.process(test_state)
             assert result["error"]
-            assert "cancelled" in result["response"].lower()
+            # Handle structured response
+            response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+            assert "cancelled" in response_text.lower()
 
 @pytest.mark.asyncio
 async def test_agent_initialization(mock_env_vars):

@@ -6,9 +6,15 @@ from typing import Dict, Any
 
 @pytest.fixture
 def mock_env_vars():
+    # Mock ConfigLoader to avoid reading real config file
     with patch.dict("os.environ", {
         "DLPFC_MODEL": "dlpfc-model",
         "OPENAI_API_KEY": "test-key"
+    }), patch("utils.config.ConfigLoader.get_agent_config", return_value={
+        "models": {
+            "primary": {"provider": "openai", "name": "dlpfc-model"},
+            "fast": {"provider": "openai", "name": "fast-model"}
+        }
     }):
         yield
 
@@ -79,7 +85,15 @@ async def test_dlpfc_agent_error_handling(dlpfc_agent, test_state):
     
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
-    assert "error" in result["response"].lower()
+    
+    # Check response content
+    response = result["response"]
+    if isinstance(response, dict):
+        response_text = response["content"]
+    else:
+        response_text = response
+        
+    assert "error" in response_text.lower()
 
 @pytest.mark.asyncio
 async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
@@ -102,7 +116,15 @@ async def test_dlpfc_agent_cancellation(dlpfc_agent, test_state):
     
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
-    assert "cancelled" in result["response"].lower()
+    
+    # Check response content
+    response = result["response"]
+    if isinstance(response, dict):
+        response_text = response["content"]
+    else:
+        response_text = response
+        
+    assert "cancelled" in response_text.lower()
 
 def test_dlpfc_format_feedback_history(dlpfc_agent, test_state):
     """Test feedback history formatting"""
@@ -300,4 +322,7 @@ async def test_response_formatting_edge_cases(dlpfc_agent):
         assert isinstance(formatted, dict)
         assert "response" in formatted
         assert not formatted["error"]
-        assert isinstance(formatted["response"], str)
+        # Response should be a dict with content
+        assert isinstance(formatted["response"], dict)
+        assert "content" in formatted["response"]
+        assert isinstance(formatted["response"]["content"], str)
