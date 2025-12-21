@@ -95,3 +95,8 @@ If `config/agents.yaml` is missing or incomplete, the system falls back to the l
 
 These will default to using the OpenAI provider.
 
+## Credential requirements
+- If you use any `provider: "openai"` models, you must set `OPENAI_API_KEY` (or set `api_key:` in the YAML entry).
+- If you use any `provider: "huggingface"` models, you must set `HUGGINGFACEHUB_API_TOKEN` (or set `api_key:` in the YAML entry).
+- If you use only `provider: "ollama"` models, you do not need either credential.
+

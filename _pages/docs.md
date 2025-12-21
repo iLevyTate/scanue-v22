@@ -7,85 +7,27 @@ sidebar:
   nav: "docs"
 ---
 
-Welcome to the SCANUE v22 documentation. Here you'll find comprehensive guides and references for using, developing, and extending the system.
+Welcome to the SCANUE v22 documentation. These pages are kept in sync with the actual code in this repository (CLI in `main.py`, workflow graph in `workflow.py`, and per-agent model configuration in `config/agents.yaml`).
 
 ## Getting Started
 
-### Quick Start
-Jump right in with our [Quick Start Guide](/docs/quick-start-guide/) to get SCANUE v22 running in minutes.
-
-### Installation
-Detailed [installation instructions](/docs/installation/) for different environments and use cases.
-
-### Configuration
-Learn how to [configure the system](/docs/configuration/) for your specific needs.
+- [Quick Start Guide]({{ "/docs/quick-start-guide/" | relative_url }})
+- [Installation]({{ "/docs/installation/" | relative_url }})
+- [Configuration]({{ "/docs/configuration/" | relative_url }})
+- [Local & Multi-Model Setup]({{ "/docs/local-models/" | relative_url }})
+- [Troubleshooting]({{ "/docs/troubleshooting/" | relative_url }})
 
 ## Architecture Documentation
 
-### System Overview
-Understand the [overall system architecture](/docs/system-overview/) and how components interact.
-
-### Agent Design
-Deep dive into [agent design patterns](/docs/agent-design/) and implementation details.
-
-### Workflow Engine
-Comprehensive guide to the [workflow engine](/docs/workflow-engine/) and LangGraph integration.
+- [System Overview]({{ "/docs/system-overview/" | relative_url }})
+- [Agent Design]({{ "/docs/agent-design/" | relative_url }})
+- [Workflow Engine]({{ "/docs/workflow-engine/" | relative_url }})
 
 ## Development Resources
 
-### Contributing
-Guidelines for [contributing to the project](/docs/contributing/) and development standards.
-
-### Testing
-Information about the [testing framework](/docs/testing/) and how to write effective tests.
-
-### Debugging
-Tools and techniques for [debugging workflows](/docs/debugging/) and agent interactions.
-
-## Code Examples
-
-### Basic Workflow
-```python
-from workflow import SCANUEWorkflow
-from agents.base import BaseAgent
-
-# Initialize workflow
-workflow = SCANUEWorkflow()
-
-# Add agents
-agent = BaseAgent(name="example_agent")
-workflow.add_agent(agent)
-
-# Execute workflow
-result = workflow.execute(input_data)
-```
-
-### Custom Agent
-```python
-from agents.base import BaseAgent
-
-class CustomAgent(BaseAgent):
-    def __init__(self, name="custom_agent"):
-        super().__init__(name)
-    
-    def process(self, input_data):
-        # Custom processing logic
-        return self.enhanced_processing(input_data)
-```
-
-### Human-in-the-Loop Integration
-```python
-from workflow import SCANUEWorkflow
-from debug.demonstrate_hitl import setup_hitl_workflow
-
-# Setup HITL workflow
-workflow = setup_hitl_workflow()
-
-# Execute with human feedback points
-result = workflow.execute_with_feedback(input_data)
-```
-
-
+- [Contributing]({{ "/docs/contributing/" | relative_url }})
+- [Testing]({{ "/docs/testing/" | relative_url }})
+- [Debugging]({{ "/docs/debugging/" | relative_url }})
 
 ## Additional Resources
 
@@ -95,4 +37,4 @@ result = workflow.execute_with_feedback(input_data)
 
 ---
 
-*Need help? Check out our [troubleshooting guide](/docs/troubleshooting/) or [open an issue](https://github.com/iLevyTate/scanue-v22/issues/new).*
+*Need help? Start with [Troubleshooting]({{ "/docs/troubleshooting/" | relative_url }}) or [open an issue](https://github.com/iLevyTate/scanue-v22/issues/new).*

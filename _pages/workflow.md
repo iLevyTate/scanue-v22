@@ -8,125 +8,82 @@ toc: true
 
 ## Overview
 
-SCANUE v22's workflow engine is built on LangGraph, providing sophisticated orchestration capabilities for multi-agent systems. The engine manages complex workflows with conditional routing, state persistence, and human-in-the-loop integration.
+SCANUE v22’s workflow engine is built on **LangGraph** (`workflow.py`). It compiles a `StateGraph` where:
+- the **DLPFC** node decides which specialist stages to run (dynamic delegation)
+- specialist stages run in the delegated order
+- **MPFC** integrates prior agent outputs into the final answer
 
 ## Core Architecture
 
 ### State Management
-The workflow maintains persistent state across all execution phases:
-- **Global State**: Shared information accessible by all agents
-- **Agent State**: Private state maintained by individual agents
-- **Transition State**: Temporary data during workflow transitions
+The workflow passes a single shared `state` dict between stages. Key fields include:
+- `task`: user input
+- `stage`: current stage name
+- `delegated_agents`: list of stage names selected by DLPFC (e.g. `["emotional_regulation", "conflict_detection", "value_assessment"]`)
+- `agent_responses`: responses collected from specialist agents
+- `feedback_history`: persisted HITL feedback loaded from `feedback_history.json`
+- `session_log`: per-run timing/trace data saved under `logs/`
 
 ### Conditional Routing
-Dynamic workflow routing based on:
-- **Agent Responses**: Decisions based on agent output
-- **External Conditions**: Environmental or user-driven factors
-- **Performance Metrics**: Routing based on system performance
+Routing is dynamic:
+- DLPFC output is parsed by `parse_agent_assignments()` to produce `delegated_agents`
+- after each node completes, `get_next_stage()` picks the next stage based on progress (completed agents vs delegated)
 
 ### Error Handling
-Comprehensive error management including:
-- **Graceful Degradation**: Continuing operation despite partial failures
-- **Rollback Mechanisms**: Reverting to previous stable states
-- **Recovery Strategies**: Automatic and manual recovery options
+Specialist agent failures are handled **gracefully**: the workflow records per-agent errors and continues when possible, so a single specialist failure does not automatically abort the run.
 
 ## Workflow Components
 
 ### Stages
-The workflow is organized into distinct stages:
-
-1. **Initialization**: System setup and agent preparation
-2. **Processing**: Core task execution by agents
-3. **Coordination**: Inter-agent communication and synchronization
-4. **Decision Points**: Human-in-the-loop interaction opportunities
-5. **Finalization**: Result compilation and cleanup
+The compiled workflow contains these stage nodes:
+- `task_delegation` (DLPFC)
+- `emotional_regulation` (VMPFC)
+- `reward_processing` (OFC)
+- `conflict_detection` (ACC)
+- `value_assessment` (MPFC)
 
 ### Transitions
-Smooth transitions between stages with:
-- **Validation**: Ensuring prerequisites are met
-- **State Transfer**: Moving relevant data between stages
-- **Cleanup**: Releasing unnecessary resources
+Transitions are chosen at runtime based on `delegated_agents` and `agent_responses`.
 
 ### Example Workflow Structure
 ```python
-from workflow import SCANUEWorkflow
-from agents.dlpfc import DLPFCAgent
-from agents.specialized import SpecializedAgent
+import asyncio
+from workflow import create_workflow
 
-# Initialize workflow
-workflow = SCANUEWorkflow()
+async def run():
+    workflow = create_workflow()
+    state = {
+        "task": "Help me evaluate whether I should take a new role.",
+        "stage": "task_delegation",
+        "response": "",
+        "subtasks": [],
+        "feedback": "",
+        "previous_response": "",
+        "feedback_history": [],
+        "session_log": {"stages": []},
+        "error": False,
+    }
+    result = await workflow.ainvoke(state)
+    print(result["response"]["content"])
 
-# Define stages
-workflow.add_stage("analysis", AnalysisStage())
-workflow.add_stage("decision", DecisionStage())
-workflow.add_stage("execution", ExecutionStage())
-
-# Configure transitions
-workflow.add_transition("analysis", "decision", condition="analysis_complete")
-workflow.add_transition("decision", "execution", condition="decision_approved")
+asyncio.run(run())
 ```
 
 ## Human-in-the-Loop Integration
 
 ### Interactive Decision Points
-Strategic placement of human feedback opportunities:
-- **Critical Decisions**: High-impact choices requiring human judgment
-- **Quality Gates**: Human validation of intermediate results
-- **Exception Handling**: Human intervention for unexpected scenarios
+The CLI (`main.py`) always offers to collect feedback after presenting the result. If you provide feedback, it is appended to `feedback_history.json` and loaded on future runs.
 
 ### Feedback Mechanisms
-- **Real-time Input**: Live interaction during workflow execution
-- **Batch Feedback**: Reviewing and approving multiple decisions
-- **Asynchronous Review**: Time-delayed feedback for non-urgent decisions
+- **Persistent feedback history**: stored in `feedback_history.json`
+- **Per-run logs**: stored under `logs/` to debug behavior and timing
 
 ### Implementation Example
 ```python
-from debug.demonstrate_hitl import setup_hitl_workflow
+from main import load_feedback_history
 
-# Setup HITL workflow
-workflow = setup_hitl_workflow()
-
-# Add human decision point
-workflow.add_human_checkpoint(
-    stage="critical_decision",
-    prompt="Please review the analysis results:",
-    options=["approve", "modify", "reject"],
-    timeout=300  # 5 minutes
-)
-```
-
-## Advanced Features
-
-### Parallel Execution
-Execute multiple agents simultaneously:
-```python
-# Parallel agent execution
-workflow.execute_parallel([
-    ("agent_1", task_1),
-    ("agent_2", task_2),
-    ("agent_3", task_3)
-])
-```
-
-### Dynamic Agent Selection
-Choose agents based on runtime conditions:
-```python
-# Dynamic agent selection
-agent = workflow.select_agent(
-    task_type="analysis",
-    workload_level="high",
-    expertise_required="statistical"
-)
-```
-
-### Workflow Composition
-Combine multiple workflows:
-```python
-# Compose workflows
-main_workflow = SCANUEWorkflow()
-sub_workflow = AnalysisWorkflow()
-
-main_workflow.embed_workflow(sub_workflow, stage="analysis")
+feedback_history = load_feedback_history()
+print(f"Loaded {len(feedback_history)} feedback items")
 ```
 
 ## Monitoring and Debugging
@@ -168,34 +125,9 @@ The system includes several debug utilities:
 - **Agent Model Caching**: Caching trained models for faster initialization
 
 ## Configuration
-
-### Workflow Configuration
-```python
-workflow_config = {
-    "max_execution_time": 3600,  # 1 hour
-    "retry_attempts": 3,
-    "parallel_execution": True,
-    "human_timeout": 300,  # 5 minutes
-    "state_persistence": True
-}
-
-workflow = SCANUEWorkflow(config=workflow_config)
-```
-
-### Agent Configuration
-```python
-agent_config = {
-    "dlpfc_agent": {
-        "memory_size": 1000,
-        "attention_span": 10,
-        "decision_threshold": 0.8
-    },
-    "specialized_agents": {
-        "max_concurrent": 5,
-        "timeout": 60
-    }
-}
-```
+Agent/model configuration is defined in `config/agents.yaml`. See:
+- [Configuration]({{ "/docs/configuration/" | relative_url }})
+- [Local & Multi-Model Setup]({{ "/docs/local-models/" | relative_url }})
 
 ## Testing Workflows
 
@@ -203,31 +135,26 @@ agent_config = {
 Test individual workflow components:
 ```python
 def test_stage_transition():
-    workflow = SCANUEWorkflow()
-    result = workflow.transition_to_stage("analysis")
-    assert result.success == True
+    # See tests/ for end-to-end and workflow integrity tests.
+    assert True
 ```
 
 ### Integration Testing
 Test complete workflow execution:
 ```python
 def test_full_workflow():
-    workflow = setup_test_workflow()
-    result = workflow.execute(test_input)
-    assert result.completion_status == "success"
+    # See tests/test_full_workflow.py
+    assert True
 ```
 
 ### Performance Testing
 Measure workflow performance:
 ```python
 def test_workflow_performance():
-    workflow = SCANUEWorkflow()
-    start_time = time.time()
-    result = workflow.execute(large_dataset)
-    execution_time = time.time() - start_time
-    assert execution_time < 300  # 5 minutes
+    # Use session logs (logs/) and profiling as needed.
+    assert True
 ```
 
 ---
 
-*For more detailed information about workflow implementation, see our [technical documentation](/docs/workflow-engine/).*
+*For more detailed information about workflow implementation, see our [technical documentation]({{ "/docs/workflow-engine/" | relative_url }}).*

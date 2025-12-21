@@ -11,21 +11,21 @@ header:
     - label: "View on GitHub"
       url: "https://github.com/iLevyTate/scanue-v22"
     - label: "Documentation"
-      url: "/docs/"
+      url: "{{ '/docs/' | relative_url }}"
 feature_row:
   - title: "Intelligent Agents"
     excerpt: "Specialized agents for different cognitive functions including DLPFC and task-specific processing."
-    url: "/agents/"
+    url: "{{ '/agents/' | relative_url }}"
     btn_label: "Learn More"
     btn_class: "btn--primary"
   - title: "LangGraph Workflows"
     excerpt: "Advanced workflow orchestration with state management and conditional routing."
-    url: "/workflow/"
+    url: "{{ '/workflow/' | relative_url }}"
     btn_label: "Learn More"
     btn_class: "btn--primary"
   - title: "Human-in-the-Loop"
     excerpt: "Seamless integration of human feedback and decision-making in automated workflows."
-    url: "/workflow/"
+    url: "{{ '/workflow/' | relative_url }}"
     btn_label: "Learn More"
     btn_class: "btn--primary"
 ---
@@ -46,15 +46,10 @@ SCANUE v22 is a sophisticated multi-agent system that leverages the power of Lan
 
 ### Getting Started
 
-```python
-# Clone the repository
+```bash
 git clone https://github.com/iLevyTate/scanue-v22.git
 cd scanue-v22
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the main workflow
 python main.py
 ```
 

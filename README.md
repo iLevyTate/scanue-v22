@@ -5,7 +5,7 @@
 ![SCANUE-V22Logo](https://github.com/user-attachments/assets/35f53dfa-5b63-4f5a-8fc2-643ddad8ab28)
 
 ## **Overview**
-SCANUE aims to develop AI-based extensions of the PFC by creating AI agents that simulate various PFC functions to assist in real-time cognitive tasks. Built using modern AI technologies, this project represents a significant step forward in cognitive augmentation and decision science.
+SCANUE v22 is a brain-inspired, **multi-agent** CLI that orchestrates specialized “PFC region” agents using **LangGraph**. It focuses on decomposing a task (DLPFC) and then conditionally invoking only the necessary specialist agents (VMPFC/OFC/ACC) before final integration (MPFC).
 
 ## **Name Change Notification**
 This repository was previously referred to as SCANJS, a deprecated project by another developer. To reflect the enhancements introduced—such as human-in-the-loop (HITL) mechanisms and customized fine-tuned models—the project has been rebranded as SCANUE-V22.
@@ -25,16 +25,11 @@ For clarity:
 
 ## **Technical Requirements**
 - **Python:** 3.8+
-- **OpenAI API Key**
-- **Required Environment Variables:**
-  ```plaintext
-  OPENAI_API_KEY=YOUR_OPENAI_API_KEY_HERE
-  DLPFC_MODEL=DLPFC_MODEL_ID_HERE
-  ACC_MODEL=ACC_MODEL_ID_HERE
-  OFC_MODEL=OFC_MODEL_ID_HERE
-  VMPFC_MODEL=VMPFC_MODEL_ID_HERE
-  MPFC_MODEL=MPFC_MODEL_ID_HERE
-  ```
+- **An LLM provider**: OpenAI, Ollama (local), or HuggingFace (endpoint/TGI)
+- **Environment variables (only if needed by your provider)**:
+  - OpenAI: `OPENAI_API_KEY`
+  - HuggingFace: `HUGGINGFACEHUB_API_TOKEN`
+  - Legacy fallback model names (optional): `DLPFC_MODEL`, `VMPFC_MODEL`, `OFC_MODEL`, `ACC_MODEL`, `MPFC_MODEL`
 
 ## **Installation**
 
@@ -49,23 +44,31 @@ For clarity:
    pip install -r requirements.txt
    ```
 
-3. **Set up environment variables** in `.env` file
+3. **(Optional) Set up environment variables** in a `.env` file (recommended)
 
 4. **Run the application:**
    ```bash
    python main.py
    ```
 
+## **Configuration**
+The primary configuration is `config/agents.yaml`. Each agent can use a different provider/model:
+
+- **Ollama (local)**: set `provider: "ollama"` and (optionally) `base_url` (default is `http://localhost:11434`)
+- **OpenAI**: set `provider: "openai"` and either set `OPENAI_API_KEY` or put `api_key:` in the YAML
+- **HuggingFace**: set `provider: "huggingface"` and either set `HUGGINGFACEHUB_API_TOKEN` or put `api_key:` in the YAML
+
+See `docs/local_models.md` for examples and recommendations.
+
 ## **Workflow**
 1. User inputs a task or problem
-2. **DLPFC Agent:** Breaks down the task and delegates subtasks
-3. Specialized agents process their aspects:
+2. **DLPFC Agent:** Breaks down the task and delegates which specialist agents are needed
+3. Specialized agents run (only if delegated):
    - **VMPFC:** Emotional regulation
    - **OFC:** Reward processing
    - **ACC:** Conflict detection
-   - **MPFC:** Value assessment
-4. Results are integrated and presented to the user
-5. User provides feedback for continuous improvement
+4. **MPFC:** Integrates all prior insights into the final response
+5. (Optional) User provides feedback (persisted to `feedback_history.json`)
 
 ## **Testing**
 Run the test suite:
@@ -75,7 +78,14 @@ pytest tests/
 
 ## **Architecture**
 
-The system uses a hierarchical processing model where the DLPFC Agent coordinates task delegation to specialized agents, which then process their respective cognitive aspects before integrating results for the final response.
+Key modules:
+
+- `main.py`: CLI entrypoint, feedback persistence, session logging
+- `workflow.py`: LangGraph workflow graph (stages + dynamic delegation)
+- `agents/`: agent implementations and provider/model factory
+- `config/agents.yaml`: per-agent model/provider configuration
+- `feedback_history.json`: persistent Human-in-the-Loop (HITL) feedback
+- `logs/`: per-run session logs
 
 ## **License**
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
