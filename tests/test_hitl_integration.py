@@ -56,14 +56,8 @@ def test_feedback_persistence():
     
     # Load feedback and verify
     loaded_feedback = load_feedback_history()
-    
-    if len(loaded_feedback) >= len(test_feedback):
-        print("✅ Feedback loading works correctly")
-        print(f"   Loaded {len(loaded_feedback)} feedback entries")
-        return True
-    else:
-        print("❌ Feedback loading failed")
-        return False
+
+    assert len(loaded_feedback) >= len(test_feedback)
 
 def test_feedback_processing():
     """Test the process_hitl_feedback function"""
@@ -92,16 +86,10 @@ def test_feedback_processing():
         updated_state["previous_response"] == "Test response content",
         "timestamp" in updated_state["feedback_history"][0]
     ]
-    
-    if all(checks):
-        print("✅ Feedback processing works correctly")
-        return True
-    else:
-        print("❌ Feedback processing failed")
-        print(f"   Checks: {checks}")
-        return False
 
-async def test_workflow_with_feedback():
+    assert all(checks), f"Feedback processing checks failed: {checks}"
+
+async def workflow_with_feedback_smoke():
     """Test that workflow properly uses feedback history"""
     print("\n🧪 Testing workflow with feedback integration...")
     
@@ -140,13 +128,13 @@ async def test_workflow_with_feedback():
             print(f"⚠️ Expected API error: {str(e)[:100]}...")
         
         print("✅ Workflow executed (API errors expected with test key)")
-        return True
+        return
         
     except Exception as e:
         print(f"❌ Workflow test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 def test_agent_prompt_integration():
     """Test that agents receive feedback in their prompts"""
@@ -173,7 +161,7 @@ def test_agent_prompt_integration():
             print("✅ DLPFC agent formats feedback correctly")
         else:
             print("❌ DLPFC feedback formatting failed")
-            return False
+            assert False
         
         # Test specialized agents have feedback in their prompts
         agents_to_test = [
@@ -193,15 +181,15 @@ def test_agent_prompt_integration():
             else:
                 print(f"❌ {agent_name} agent missing feedback history in prompt")
                 print(f"   Template content: {template_content[:200]}...")
-                return False
+                assert False
         
-        return True
+        return
         
     except Exception as e:
         print(f"❌ Agent prompt test failed: {e}")
-        return False
+        raise
 
-def test_hitl_end_to_end():
+def run_hitl_end_to_end():
     """Test complete HITL flow end-to-end"""
     print("\n🧪 Testing complete HITL end-to-end flow...")
     
@@ -212,61 +200,26 @@ def test_hitl_end_to_end():
         ("Agent Prompt Integration", test_agent_prompt_integration)
     ]
     
-    results = []
-    for test_name, test_func in tests:
-        try:
-            if asyncio.iscoroutinefunction(test_func):
-                result = asyncio.run(test_func())
-            else:
-                result = test_func()
-            results.append((test_name, result))
-        except Exception as e:
-            print(f"❌ {test_name} crashed: {e}")
-            results.append((test_name, False))
-    
-    # Test workflow integration (separate to avoid async issues)
-    try:
-        workflow_result = asyncio.run(test_workflow_with_feedback())
-        results.append(("Workflow Integration", workflow_result))
-    except Exception as e:
-        print(f"❌ Workflow Integration crashed: {e}")
-        results.append(("Workflow Integration", False))
-    
-    return results
+    for _, test_func in tests:
+        test_func()
+
+    # Optional smoke check (not a pytest test; may require a working provider).
+    # asyncio.run(workflow_with_feedback_smoke())
+    return
 
 def main():
     """Run all HITL integration tests"""
     print("🚀 Testing HITL (Human-In-The-Loop) Integration")
     print("=" * 60)
     
-    results = test_hitl_end_to_end()
+    results = run_hitl_end_to_end()
     
     print("\n" + "=" * 60)
     print("📊 HITL INTEGRATION TEST RESULTS:")
     print("=" * 60)
     
-    passed = 0
-    total = len(results)
-    
-    for test_name, success in results:
-        status = "✅ PASS" if success else "❌ FAIL"
-        print(f"{status} {test_name}")
-        if success:
-            passed += 1
-    
-    print(f"\n🎯 OVERALL RESULT: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print("🎉 ALL HITL COMPONENTS ARE PROPERLY INTEGRATED! 🎉")
-        print("\n✅ HITL Features Verified:")
-        print("   • Feedback persistence across sessions")
-        print("   • Feedback processing and state management") 
-        print("   • Agent prompt integration with feedback history")
-        print("   • Workflow state passing and integration")
-        return True
-    else:
-        print(f"⚠️ {total - passed} tests failed - HITL needs attention")
-        return False
+    print("✅ HITL integration tests completed")
+    return True
 
 if __name__ == "__main__":
     success = main()

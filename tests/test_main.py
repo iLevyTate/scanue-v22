@@ -195,11 +195,21 @@ async def test_keyboard_interrupt_handling(mock_env_vars, mock_workflow, capsys)
 
 @pytest.mark.asyncio
 async def test_missing_api_key(monkeypatch):
-    """Test that the application exits when API key is missing."""
+    """Test that the application exits when an OpenAI-configured model is missing OPENAI_API_KEY."""
     # Remove API key from environment
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     
-    with pytest.raises(SystemExit) as excinfo:
-        await main(["test task"])
-    
-    assert excinfo.value.code == 1 
+    # Force an OpenAI-based configuration so credentials are required.
+    with patch("main.ConfigLoader.load_config", return_value={
+        "agents": {
+            "DLPFC": {
+                "models": {
+                    "primary": {"provider": "openai", "name": "gpt-4o-mini"}
+                }
+            }
+        }
+    }):
+        with pytest.raises(SystemExit) as excinfo:
+            await main(["test task"])
+
+    assert excinfo.value.code == 1

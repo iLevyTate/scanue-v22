@@ -72,12 +72,7 @@ def test_get_next_stage_function():
     print(f"Actual:   {sequence}")
     print(f"Match: {sequence == expected_sequence}")
     
-    if sequence != expected_sequence:
-        print("\n❌ get_next_stage function has issues!")
-    else:
-        print("\n✅ get_next_stage function works correctly")
-    
-    return sequence == expected_sequence
+    assert sequence == expected_sequence
 
 if __name__ == "__main__":
     print("🧠 Testing get_next_stage function behavior...")
