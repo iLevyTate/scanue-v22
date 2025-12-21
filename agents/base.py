@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
 import os
 from typing import Optional, Dict, Any
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 import asyncio
 import copy
 import json
+
+from utils.config import ConfigLoader
+from agents.factory import LLMFactory
 
 # Load environment variables
 load_dotenv()
@@ -24,27 +26,44 @@ class BaseAgent(ABC):
     for consistent agent interaction patterns.
     """
     
-    def __init__(self, model_env_key: str):
-        """Initialize agent with OpenAI model from environment configuration.
+    def __init__(self, agent_name: str, model_env_key: Optional[str] = None):
+        """Initialize agent with models from configuration.
         
         Args:
-            model_env_key: Environment variable name containing the OpenAI model identifier
-        
-        Raises:
-            ValueError: If the specified environment variable is not found
+            agent_name: Name of the agent (e.g., "DLPFC", "VMPFC")
+            model_env_key: Optional legacy env var for backward compatibility
         """
-        model = os.getenv(model_env_key)
-        if not model:
-            raise ValueError(f"Model not found in environment variables: {model_env_key}")
+        self.agent_name = agent_name
+        self.models = {}
         
-        print(f"Initializing agent with model: {model}")  # Debug output
-        # LLM CONFIGURATION: Set up OpenAI client with robust timeout and retry settings
-        self.llm = ChatOpenAI(
-            model=model,
-            timeout=30.0,           # Total operation timeout
-            max_retries=3,          # Automatic retry attempts
-            request_timeout=30.0    # Individual HTTP request timeout
-        )
+        # Load agent configuration
+        agent_config = ConfigLoader.get_agent_config(agent_name)
+        model_configs = agent_config.get("models", {})
+        
+        # Initialize models
+        if model_configs:
+            print(f"Initializing {agent_name} with configured models: {list(model_configs.keys())}")
+            for model_type, config in model_configs.items():
+                try:
+                    self.models[model_type] = LLMFactory.create_llm(config)
+                except Exception as e:
+                    print(f"Error initializing {model_type} model for {agent_name}: {e}")
+        
+        # Fallback/Legacy Initialization if no primary model found
+        if "primary" not in self.models:
+            print(f"No primary model configured for {agent_name}, falling back to legacy/default...")
+            fallback_config = ConfigLoader.get_model_config(
+                agent_name, 
+                "primary", 
+                env_var_fallback=model_env_key
+            )
+            self.models["primary"] = LLMFactory.create_llm(fallback_config)
+            
+        # Set primary model as default self.llm for backward compatibility
+        self.llm = self.models.get("primary")
+        if not self.llm:
+             raise ValueError(f"Failed to initialize primary model for agent {agent_name}")
+
         self.prompt = self._create_prompt()     # Agent-specific prompt template
         self.last_raw_response = None           # Cache for debugging and logging
     
@@ -109,7 +128,7 @@ class BaseAgent(ABC):
     async def _process_with_timeout(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Process with timeout handling."""
         try:
-            print(f"Sending request to OpenAI API...")  # Debug output
+            print(f"Sending request to LLM API...")  # Debug output
             
             # Format prompt messages
             formatted_messages = self.prompt.format_messages(
@@ -121,20 +140,24 @@ class BaseAgent(ABC):
             )
             
             # Invoke the LLM
+            # Note: self.llm is now an alias for self.models['primary']
             response = await asyncio.wait_for(
                 self.llm.ainvoke(formatted_messages),
                 timeout=30.0
             )
             
             # Store the complete raw response for logging
+            # Handle different model attributes safely
+            model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown"))
+            
             self.last_raw_response = {
-                "model": self.llm.model_name,
+                "model": model_name,
                 "prompt": self._serialize_messages(formatted_messages),
                 "response": response.content,
                 "metadata": {
                     "temperature": getattr(self.llm, "temperature", None),
+                    # max_tokens might not exist on all model types
                     "max_tokens": getattr(self.llm, "max_tokens", None),
-                    "top_p": getattr(self.llm, "top_p", None)
                 }
             }
             
