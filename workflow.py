@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, TypedDict, Literal
 from langgraph.graph import StateGraph, END
 from agents.dlpfc import DLPFCAgent
@@ -7,6 +8,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import copy
 import re
+
+# Ensure Unicode output works on Windows consoles where stdout may default to cp1252.
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    # Never fail the application due to console encoding.
+    pass
 
 class AgentState(TypedDict, total=False):
     task: str
