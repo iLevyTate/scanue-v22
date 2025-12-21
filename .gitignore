@@ -163,3 +163,7 @@ cython_debug/
 feedback_history.json
 @feedback_history.json
 logs/
+
+# Local Configuration
+config/agents.yaml
+# Keep config/agents.example.yaml if you create one later, but ignore local customizations

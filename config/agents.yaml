@@ -1,0 +1,55 @@
+agents:
+  # Dorsolateral Prefrontal Cortex - Executive Function & Planning
+  DLPFC:
+    description: "Central controller responsible for task breakdown, delegation, and strategy"
+    models:
+      primary:
+        provider: "ollama"
+        name: "llama3.2:latest"
+        temperature: 0.1
+        base_url: "http://localhost:11434"
+      fast:
+        provider: "ollama"
+        name: "tinyllama:1.1b"
+        temperature: 0.0
+        base_url: "http://localhost:11434"
+
+  # Ventromedial Prefrontal Cortex - Emotional Regulation & Risk
+  VMPFC:
+    description: "Evaluates emotional significance, social context, and risk"
+    models:
+      primary:
+        provider: "ollama"
+        name: "llama3.2:3b"
+        temperature: 0.7 # Higher temperature for emotional nuance
+        base_url: "http://localhost:11434"
+
+  # Orbitofrontal Cortex - Reward Processing
+  OFC:
+    description: "Evaluates rewards, costs, and economic outcomes"
+    models:
+      primary:
+        provider: "ollama"
+        name: "llama3.2:latest"
+        temperature: 0.2
+        base_url: "http://localhost:11434"
+
+  # Anterior Cingulate Cortex - Conflict Detection
+  ACC:
+    description: "Monitors for conflicts, errors, and discrepancies"
+    models:
+      primary:
+        provider: "ollama"
+        name: "tinyllama:1.1b"
+        temperature: 0.0 # Strict logic for error detection
+        base_url: "http://localhost:11434"
+
+  # Medial Prefrontal Cortex - Integration & Value Assessment
+  MPFC:
+    description: "Integrates all inputs for final value-based decision making"
+    models:
+      primary:
+        provider: "ollama"
+        name: "llama3.2:latest"
+        temperature: 0.4
+        base_url: "http://localhost:11434"

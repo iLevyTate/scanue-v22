@@ -21,6 +21,10 @@ docs:
         url: /docs/installation/
       - title: "Configuration"
         url: /docs/configuration/
+      - title: "Local & Multi-Model Setup"
+        url: /docs/local-models/
+      - title: "Troubleshooting"
+        url: /docs/troubleshooting/
   - title: Architecture
     children:
       - title: "System Overview"

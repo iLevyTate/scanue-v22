@@ -8,11 +8,11 @@ toc: true
 
 ## Overview
 
-SCANUE v22 employs a sophisticated multi-agent architecture where different agents specialize in specific cognitive functions. This design enables efficient task distribution and leverages the strengths of each agent type.
+SCANUE v22 uses a small set of specialized agents that mirror “PFC region” roles. The workflow always starts with DLPFC (delegation) and ends with MPFC (integration), with VMPFC/OFC/ACC invoked only when DLPFC delegates them.
 
 ## Base Agent
 
-The foundation of all agents in the system, providing core functionality and common interfaces.
+All agents inherit from `agents/base.py::BaseAgent`, which provides:
 
 ### Features
 - **Common Interface**: Standardized methods for agent communication
@@ -20,12 +20,22 @@ The foundation of all agents in the system, providing core functionality and com
 - **Error Handling**: Robust error management and recovery
 - **Logging**: Comprehensive logging for debugging and monitoring
 
-### Usage
-```python
-from agents.base import BaseAgent
+### Notes
+- `BaseAgent` is **abstract** (you don’t instantiate it directly).
+- Models are loaded from `config/agents.yaml` (with environment variable fallback for legacy setups).
 
-agent = BaseAgent(name="base_agent")
-result = agent.process(input_data)
+### Example (specialized agent)
+```python
+import asyncio
+from agents.specialized import VMPFCAgent
+
+async def run():
+    agent = VMPFCAgent()
+    state = {"task": "I need to decide whether to switch jobs.", "feedback_history": []}
+    result = await agent.process(state)
+    print(result["response"]["content"])
+
+asyncio.run(run())
 ```
 
 ## DLPFC Agent
@@ -46,16 +56,25 @@ The Dorsolateral Prefrontal Cortex (DLPFC) agent specializes in executive functi
 
 ### Usage
 ```python
+import asyncio
 from agents.dlpfc import DLPFCAgent
 
-dlpfc_agent = DLPFCAgent(name="executive_agent")
-strategic_plan = dlpfc_agent.create_strategy(problem_context)
-decision = dlpfc_agent.make_executive_decision(options)
+async def run():
+    dlpfc = DLPFCAgent()
+    state = {"task": "Help me plan a hard conversation with my manager.", "feedback_history": []}
+    result = await dlpfc.process(state)
+    print(result["response"]["content"])
+
+asyncio.run(run())
 ```
 
 ## Specialized Agents
 
-Task-specific agents optimized for particular domains or functions.
+SCANUE v22 ships four specialist agents (in `agents/specialized.py`):
+- **VMPFC**: emotional/social framing and risk nuance
+- **OFC**: reward/cost tradeoffs and outcomes
+- **ACC**: conflict/error/contradiction checking
+- **MPFC**: final integration and recommendation
 
 ### Design Principles
 - **Domain Expertise**: Deep specialization in specific areas
@@ -63,7 +82,7 @@ Task-specific agents optimized for particular domains or functions.
 - **Interoperability**: Seamless integration with other agents
 - **Scalability**: Ability to handle varying workloads
 
-### Implementation Example
+### Implementation Example (new agent)
 ```python
 from agents.specialized import SpecializedAgent
 
@@ -76,6 +95,8 @@ class AnalysisAgent(SpecializedAgent):
         # Specialized analysis logic
         return self.perform_analysis(dataset)
 ```
+
+*Note: SCANUE’s default workflow graph only includes the built-in agents. To wire in a new agent you’ll also update `workflow.py` (add a node + include it in delegation/edge mappings).*
 
 ## Agent Coordination
 
@@ -92,17 +113,10 @@ Agents are seamlessly integrated into the LangGraph workflow engine, allowing fo
 
 ### Example Coordination
 ```python
-from workflow import SCANUEWorkflow
-from agents.dlpfc import DLPFCAgent
-from agents.specialized import SpecializedAgent
+from workflow import create_workflow
 
-workflow = SCANUEWorkflow()
-
-# Add coordinated agents
-executive_agent = DLPFCAgent(name="executive")
-analysis_agent = SpecializedAgent(name="analyzer")
-
-workflow.add_agent_chain([executive_agent, analysis_agent])
+# The workflow is defined in workflow.py and runs a LangGraph StateGraph.
+workflow = create_workflow()
 ```
 
 ## Human-Agent Interaction
@@ -141,4 +155,4 @@ Each agent type includes comprehensive test coverage:
 
 ---
 
-*Learn more about implementing custom agents in our [development documentation](/docs/agent-design/).*
+*Learn more about implementing custom agents in our [development documentation]({{ "/docs/agent-design/" | relative_url }}).*

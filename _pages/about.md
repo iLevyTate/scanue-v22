@@ -8,7 +8,7 @@ toc: true
 
 ## Overview
 
-SCANUE v22 represents the next generation of multi-agent workflow systems, designed to handle complex cognitive tasks through sophisticated agent orchestration and human-in-the-loop interactions.
+SCANUE v22 is a brain-inspired, multi-agent CLI built on LangGraph. It decomposes a task through an “executive” agent (DLPFC), conditionally invokes specialist agents (VMPFC/OFC/ACC), and integrates results through MPFC.
 
 ## System Architecture
 
@@ -21,13 +21,12 @@ The system is built on several key components:
 
 ### Workflow Engine
 - **LangGraph Integration**: Advanced workflow orchestration with state management
-- **Conditional Routing**: Dynamic task allocation based on context and requirements
-- **State Management**: Persistent state across workflow executions
+- **Conditional Routing**: Dynamic agent selection based on DLPFC delegation
+- **State Management**: Shared state dict passed through stages, with per-run session logs
 
 ### Human-in-the-Loop Integration
-- **Interactive Decision Points**: Strategic placement of human feedback opportunities
-- **Real-time Collaboration**: Seamless integration of human expertise
-- **Feedback Learning**: System adaptation based on human input
+- **Persistent Feedback**: Optional user feedback stored in `feedback_history.json`
+- **Session Logs**: Each run is logged under `logs/` for debugging and analysis
 
 ## Key Features
 
@@ -55,10 +54,10 @@ Comprehensive debugging utilities help developers understand system behavior and
 
 If you need assistance with SCANUE v22:
 
-1. Check the [documentation](/docs/)
+1. Check the [documentation]({{ "/docs/" | relative_url }})
 2. Review existing [issues](https://github.com/iLevyTate/scanue-v22/issues)
 3. Create a new issue if needed
 
 ## Contributing
 
-We welcome contributions to SCANUE v22! Please see our [contributing guide](/docs/contributing/) for more information on how to get involved.
+We welcome contributions to SCANUE v22! Please see our [contributing guide]({{ "/docs/contributing/" | relative_url }}) for more information on how to get involved.

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from agents.base import BaseAgent
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from typing import Dict, Any
 import asyncio
 from openai import AuthenticationError
@@ -9,7 +9,7 @@ from openai import AuthenticationError
 class TestAgent(BaseAgent):
     """Test implementation of BaseAgent"""
     def __init__(self):
-        super().__init__(model_env_key="TEST_MODEL")
+        super().__init__(agent_name="TEST", model_env_key="TEST_MODEL")
         
     def _create_prompt(self) -> ChatPromptTemplate:
         return ChatPromptTemplate.from_template("Test prompt: {task}")
@@ -57,7 +57,9 @@ async def test_base_agent_process(test_agent, test_state):
     with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
         result = await test_agent.process(test_state)
         assert isinstance(result, dict)
-        assert result["response"] == "test response"
+        # Handle structured response
+        response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+        assert response_text == "test response"
         assert not result.get("error", False)
 
 @pytest.mark.asyncio
@@ -68,7 +70,9 @@ async def test_base_agent_validation(test_agent):
         mock_ainvoke.side_effect = ValueError("Invalid state format")
         result = await test_agent.process(invalid_state)
         assert result["error"]
-        assert "Invalid state format" in result["response"]
+        # Handle structured response
+        response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+        assert "Invalid state format" in response_text
 
 @pytest.mark.asyncio
 async def test_base_agent_timeout(test_agent, test_state):
@@ -89,7 +93,9 @@ async def test_base_agent_error_handling(test_agent, test_state):
     with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=ValueError("Test error")):
         result = await test_agent.process(test_state)
         assert result["error"]
-        assert "Test error" in result["response"]
+        # Handle structured response
+        response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+        assert "Test error" in response_text
 
 @pytest.mark.asyncio
 async def test_base_agent_cancellation(test_agent, test_state):
@@ -97,4 +103,6 @@ async def test_base_agent_cancellation(test_agent, test_state):
     with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError()):
         result = await test_agent.process(test_state)
         assert result["error"]
-        assert "cancelled" in result["response"].lower()
+        # Handle structured response
+        response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
+        assert "cancelled" in response_text.lower()

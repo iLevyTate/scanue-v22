@@ -8,6 +8,17 @@ from datetime import datetime
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 from workflow import create_workflow, process_hitl_feedback
+from utils.config import ConfigLoader
+
+# Ensure Unicode output works on Windows consoles where stdout may default to cp1252.
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    # Never fail the application due to console encoding.
+    pass
 
 # Load environment variables
 load_dotenv()
@@ -128,9 +139,36 @@ def format_stage_name(stage: str) -> str:
 async def main(args=None):
     """Main entry point for the application."""
     try:
-        # Check for API key
-        if not os.getenv("OPENAI_API_KEY"):
-            print("Error: OPENAI_API_KEY environment variable not set")
+        # Validate provider credentials based on configured agents/models.
+        # This allows fully-local setups (e.g., Ollama) to run without OPENAI_API_KEY.
+        config = ConfigLoader.load_config()
+        agents_cfg = (config or {}).get("agents", {})
+
+        openai_models_need_key = []
+        hf_models_need_token = []
+
+        for agent_name, agent_cfg in agents_cfg.items():
+            for model_type, model_cfg in (agent_cfg or {}).get("models", {}).items():
+                provider = (model_cfg or {}).get("provider", "openai").lower()
+                if provider == "openai":
+                    if not (model_cfg or {}).get("api_key") and not os.getenv("OPENAI_API_KEY"):
+                        openai_models_need_key.append(f"{agent_name}.{model_type}")
+                elif provider == "huggingface":
+                    if not (model_cfg or {}).get("api_key") and not os.getenv("HUGGINGFACEHUB_API_TOKEN"):
+                        hf_models_need_token.append(f"{agent_name}.{model_type}")
+
+        if openai_models_need_key:
+            print(
+                "Error: OPENAI_API_KEY is required for these configured OpenAI models: "
+                + ", ".join(openai_models_need_key)
+            )
+            sys.exit(1)
+
+        if hf_models_need_token:
+            print(
+                "Error: HUGGINGFACEHUB_API_TOKEN is required for these configured HuggingFace models: "
+                + ", ".join(hf_models_need_token)
+            )
             sys.exit(1)
             
         print("=" * 50)
@@ -149,9 +187,11 @@ async def main(args=None):
         if feedback_history:
             print(f"📚 Loaded {len(feedback_history)} previous feedback items")
         
+        interactive = not (args and len(args) > 0)
+
         while True:
             # Get task from command line args or user input
-            if args and len(args) > 0:
+            if not interactive:
                 task = args[0]
             else:
                 print("Please describe your task or issue:")
@@ -213,30 +253,32 @@ async def main(args=None):
                 # Always present the response and offer feedback option
                 print(f"\n✅ Result: {response_content}")
                     
-                # HUMAN-IN-THE-LOOP: Always offer feedback collection for continuous improvement
-                print("\n📝 Would you like to provide feedback? (y/n)")
-                feedback_choice = input().strip().lower()
-                
-                if feedback_choice == "y":
-                    print("Please provide your feedback:")
-                    feedback = input().strip()
-                    if feedback:
-                        print("\n🔄 Processing your feedback...")
-                        # PERSISTENT LEARNING: Add feedback to cross-session history
-                        # This enables the system to learn from previous interactions
-                        new_feedback = {
-                            "response": response_content,  # Store response for context
-                            "feedback": feedback,          # User's qualitative assessment
-                            "stage": result.get("stage", "unknown")  # Processing stage context
-                        }
-                        feedback_history.append(new_feedback)
-                        # PERSISTENCE: Save updated feedback history to file for future sessions
-                        save_feedback_history(feedback_history)
-                        
-                        # SESSION TRACKING: Add feedback to current session log
-                        session_log["user_feedback"] = feedback
-                        
-                        print("\n✅ Feedback stored for future queries.")
+                # HUMAN-IN-THE-LOOP: Offer feedback collection only in interactive mode.
+                # Non-interactive runs (args provided) should never block on stdin.
+                if interactive:
+                    print("\n📝 Would you like to provide feedback? (y/n)")
+                    feedback_choice = input().strip().lower()
+                    
+                    if feedback_choice == "y":
+                        print("Please provide your feedback:")
+                        feedback = input().strip()
+                        if feedback:
+                            print("\n🔄 Processing your feedback...")
+                            # PERSISTENT LEARNING: Add feedback to cross-session history
+                            # This enables the system to learn from previous interactions
+                            new_feedback = {
+                                "response": response_content,  # Store response for context
+                                "feedback": feedback,          # User's qualitative assessment
+                                "stage": result.get("stage", "unknown")  # Processing stage context
+                            }
+                            feedback_history.append(new_feedback)
+                            # PERSISTENCE: Save updated feedback history to file for future sessions
+                            save_feedback_history(feedback_history)
+                            
+                            # SESSION TRACKING: Add feedback to current session log
+                            session_log["user_feedback"] = feedback
+                            
+                            print("\n✅ Feedback stored for future queries.")
                 
                 # Save the complete session log
                 log_file = save_session_log(session_log)
@@ -259,7 +301,7 @@ async def main(args=None):
             print("\n✨ Processing complete! Type 'exit' to quit or enter a new task.\n")
             
             # If using command line args, exit after processing
-            if args:
+            if not interactive:
                 break
                 
     except KeyboardInterrupt:

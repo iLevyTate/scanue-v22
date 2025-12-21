@@ -33,7 +33,7 @@ def test_workflow_structure():
     # Get the compiled graph
     try:
         # Access the underlying graph structure
-        graph = workflow.graph
+        graph = workflow.get_graph()
         print(f"Graph nodes: {list(graph.nodes.keys())}")
         
         # Examine edges

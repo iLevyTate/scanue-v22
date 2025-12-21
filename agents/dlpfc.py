@@ -1,13 +1,13 @@
 from typing import Dict, Any, List
 import asyncio
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from .base import BaseAgent
 
 class DLPFCAgent(BaseAgent):
     """Dorsolateral Prefrontal Cortex Agent - Central Controller"""
     
     def __init__(self):
-        super().__init__(model_env_key="DLPFC_MODEL")
+        super().__init__(agent_name="DLPFC", model_env_key="DLPFC_MODEL")
 
     def _create_prompt(self) -> ChatPromptTemplate:
         template = """You are the Dorsolateral Prefrontal Cortex (DLPFC) Agent, responsible for:
@@ -54,6 +54,11 @@ class DLPFCAgent(BaseAgent):
         try:
             print(f"DLPFC Agent processing state: {state}")  # Debug output
             
+            # FUTURE ENHANCEMENT: 
+            # If we had a 'fast' model configured for simple tasks, we could check task complexity here
+            # and choose self.models['fast'] vs self.models['primary'].
+            # For now, we stick to the primary model (self.llm) to ensure consistent delegation logic.
+            
             # Get task breakdown from LLM
             response = await self.llm.ainvoke(
                 self.prompt.format_messages(
@@ -69,6 +74,9 @@ class DLPFCAgent(BaseAgent):
             
             # Parse response and update state
             updated_state = await self._format_response(response.content)
+            
+            # Use 'fast' model for parsing subtasks if available, otherwise use primary
+            # (Note: _parse_subtasks is currently regex-based, but could be LLM-based in future)
             subtasks = await self._parse_subtasks(response.content)
             
             print(f"Parsed subtasks: {subtasks}")  # Debug output

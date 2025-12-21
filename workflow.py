@@ -1,3 +1,4 @@
+import sys
 from typing import Dict, Any, TypedDict, Literal
 from langgraph.graph import StateGraph, END
 from agents.dlpfc import DLPFCAgent
@@ -7,6 +8,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import copy
 import re
+
+# Ensure Unicode output works on Windows consoles where stdout may default to cp1252.
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    # Never fail the application due to console encoding.
+    pass
 
 class AgentState(TypedDict, total=False):
     task: str
@@ -20,6 +31,7 @@ class AgentState(TypedDict, total=False):
     error: bool
     delegated_agents: list  # New field to track which agents should be called
     agent_responses: dict   # New field to collect responses from all agents
+    agent_errors: dict      # New field to track errors from specific agents
 
 @asynccontextmanager
 async def timeout_context(timeout_seconds: float = 30.0):
@@ -226,6 +238,24 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
         async with timeout_context():
             result = await asyncio.wait_for(dlpfc.process(state), timeout=30.0)
             
+            # Check for agent-reported errors
+            if result.get("error"):
+                error_msg = result.get("response", {}).get("content", "Unknown error")
+                print(f"❌ Task delegation reported error: {error_msg}")
+                # Add to agent_errors
+                if "agent_errors" not in state:
+                    state["agent_errors"] = {}
+                state["agent_errors"]["DLPFC"] = error_msg
+                
+                # Use resilient delegation
+                correct_delegated_agents = ["emotional_regulation", "conflict_detection", "value_assessment"]
+                return {
+                    **state,
+                    **result,
+                    "delegated_agents": correct_delegated_agents,
+                    "stage": correct_delegated_agents[0]
+                }
+
             # Save raw LLM response if available
             if hasattr(dlpfc, "last_raw_response"):
                 result["raw_llm_response"] = dlpfc.last_raw_response
@@ -315,6 +345,13 @@ async def process_emotional_regulation(state: Dict[str, Any]) -> Dict[str, Any]:
         async with timeout_context():
             result = await asyncio.wait_for(vmpfc.process(state), timeout=30.0)
             
+            # Check for agent-reported errors
+            if result.get("error"):
+                error_msg = result.get("response", {}).get("content", "Unknown error")
+                if "agent_errors" not in state:
+                    state["agent_errors"] = {}
+                state["agent_errors"]["VMPFC"] = error_msg
+            
             # Save raw LLM response if available
             if hasattr(vmpfc, "last_raw_response"):
                 result["raw_llm_response"] = vmpfc.last_raw_response
@@ -386,6 +423,13 @@ async def process_reward_processing(state: Dict[str, Any]) -> Dict[str, Any]:
         async with timeout_context():
             result = await asyncio.wait_for(ofc.process(state), timeout=30.0)
             
+            # Check for agent-reported errors
+            if result.get("error"):
+                error_msg = result.get("response", {}).get("content", "Unknown error")
+                if "agent_errors" not in state:
+                    state["agent_errors"] = {}
+                state["agent_errors"]["OFC"] = error_msg
+            
             # Save raw LLM response if available
             if hasattr(ofc, "last_raw_response"):
                 result["raw_llm_response"] = ofc.last_raw_response
@@ -445,6 +489,13 @@ async def process_conflict_detection(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         async with timeout_context():
             result = await asyncio.wait_for(acc.process(state), timeout=30.0)
+            
+            # Check for agent-reported errors
+            if result.get("error"):
+                error_msg = result.get("response", {}).get("content", "Unknown error")
+                if "agent_errors" not in state:
+                    state["agent_errors"] = {}
+                state["agent_errors"]["ACC"] = error_msg
             
             # Save raw LLM response if available
             if hasattr(acc, "last_raw_response"):
@@ -526,6 +577,13 @@ async def process_value_assessment(state: Dict[str, Any]) -> Dict[str, Any]:
         
         async with timeout_context():
             result = await asyncio.wait_for(mpfc.process(enhanced_state), timeout=30.0)
+            
+            # Check for agent-reported errors
+            if result.get("error"):
+                error_msg = result.get("response", {}).get("content", "Unknown error")
+                if "agent_errors" not in state:
+                    state["agent_errors"] = {}
+                state["agent_errors"]["MPFC"] = error_msg
             
             # Save raw LLM response if available
             if hasattr(mpfc, "last_raw_response"):
