@@ -1,11 +1,3 @@
----
-permalink: /docs/local_models/
-title: "Local & Multi-Model Configuration"
-excerpt: "How to configure SCANUE-V22 to use local models (Ollama, HuggingFace) and specialized models for each brain region."
-last_modified_at: 2025-05-20T10:00:00-05:00
-toc: true
----
-
 # Local & Multi-Model Configuration
 
 SCANUE-V22 supports a flexible multi-model architecture that allows you to assign specific AI models to different "brain regions" (agents). This includes support for local inference using Ollama and HuggingFace, as well as cloud providers like OpenAI.
