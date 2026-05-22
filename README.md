@@ -82,10 +82,13 @@ Key modules:
 
 - `main.py`: CLI entrypoint, feedback persistence, session logging
 - `workflow.py`: LangGraph workflow graph (stages + dynamic delegation)
-- `agents/`: agent implementations and provider/model factory
+- `agents/`: agent implementations (`base.py`, `dlpfc.py`, `specialized.py`) and the provider/model `factory.py`
+- `utils/config.py`: YAML config loader with legacy env-var fallback
 - `config/agents.yaml`: per-agent model/provider configuration
-- `feedback_history.json`: persistent Human-in-the-Loop (HITL) feedback
-- `logs/`: per-run session logs
+- `docs/local_models.md`: guide for Ollama / HuggingFace / OpenAI configuration
+- `tests/`: pytest suite covering agents, workflow, HITL, and CLI
+- `feedback_history.json`: persistent Human-in-the-Loop (HITL) feedback (gitignored)
+- `logs/`: per-run session logs (gitignored)
 
 ## **License**
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
