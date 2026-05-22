@@ -8,6 +8,8 @@ from openai import AuthenticationError
 
 class TestAgent(BaseAgent):
     """Test implementation of BaseAgent"""
+    __test__ = False  # Not a pytest test class; opts out of test collection.
+
     def __init__(self):
         super().__init__(agent_name="TEST", model_env_key="TEST_MODEL")
         
