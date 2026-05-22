@@ -1,6 +1,6 @@
 # **SCANUE-V22**
 
-[![DOI](https://zenodo.org/badge/893601857.svg)](https://doi.org/10.5281/zenodo.14510406)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18023657.svg)](https://doi.org/10.5281/zenodo.18023657)
 
 ![SCANUE-V22Logo](https://github.com/user-attachments/assets/35f53dfa-5b63-4f5a-8fc2-643ddad8ab28)
 
