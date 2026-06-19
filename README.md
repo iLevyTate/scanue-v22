@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18023657.svg)](https://doi.org/10.5281/zenodo.18023657)
 
-![SCANUE-V22Logo](https://github.com/user-attachments/assets/35f53dfa-5b63-4f5a-8fc2-643ddad8ab28)
+<img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/7b4ec095-8238-4b62-9dcb-1531dff5c8a9" />
 
 ## **Overview**
 SCANUE v22 is a brain-inspired, **multi-agent** CLI that orchestrates specialized “PFC region” agents using **LangGraph**. It focuses on decomposing a task (DLPFC) and then conditionally invoking only the necessary specialist agents (VMPFC/OFC/ACC) before final integration (MPFC).
@@ -20,8 +20,8 @@ For clarity:
 - **OFC Agent:** Reward processing and outcome evaluation
 - **ACC Agent:** Conflict detection and error monitoring
 - **MPFC Agent:** Value-based decision-making
-
-![SCANUE-V22Info](https://github.com/user-attachments/assets/d26044f7-ac85-44ea-b358-90b373bcf452)
+  <img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/85cc34e7-5941-452d-a6a1-fdd19ff85a10" />
+<img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/b93fd3de-617d-45f3-ae34-018f24147a44" />
 
 ## **Technical Requirements**
 - **Python:** 3.8+
