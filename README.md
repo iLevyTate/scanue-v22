@@ -20,8 +20,6 @@ For clarity:
 - **OFC Agent:** Reward processing and outcome evaluation
 - **ACC Agent:** Conflict detection and error monitoring
 - **MPFC Agent:** Value-based decision-making
-  <img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/85cc34e7-5941-452d-a6a1-fdd19ff85a10" />
-<img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/b93fd3de-617d-45f3-ae34-018f24147a44" />
 
 ## **Technical Requirements**
 - **Python:** 3.8+
