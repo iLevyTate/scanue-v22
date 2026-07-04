@@ -1,10 +1,10 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
-from agents.base import BaseAgent
+from agents.base import BaseAgent, AGENT_LLM_TIMEOUT_SECONDS
+from workflow import NODE_TIMEOUT_SECONDS
 from langchain_core.prompts import ChatPromptTemplate
 from typing import Dict, Any
 import asyncio
-from openai import AuthenticationError
 
 class TestAgent(BaseAgent):
     """Test implementation of BaseAgent"""
@@ -100,11 +100,15 @@ async def test_base_agent_error_handling(test_agent, test_state):
         assert "Test error" in response_text
 
 @pytest.mark.asyncio
-async def test_base_agent_cancellation(test_agent, test_state):
-    """Test cancellation handling"""
+async def test_base_agent_cancellation_propagates(test_agent, test_state):
+    """CancelledError is a BaseException and must propagate for cooperative
+    cancellation to work -- it is no longer swallowed into an error result."""
     with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError()):
-        result = await test_agent.process(test_state)
-        assert result["error"]
-        # Handle structured response
-        response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
-        assert "cancelled" in response_text.lower()
+        with pytest.raises(asyncio.CancelledError):
+            await test_agent.process(test_state)
+
+
+def test_outer_node_timeout_exceeds_inner_llm_timeout():
+    """C4 guard: the outer per-node timeout must stay strictly greater than the
+    inner LLM timeout so they never race."""
+    assert NODE_TIMEOUT_SECONDS > AGENT_LLM_TIMEOUT_SECONDS

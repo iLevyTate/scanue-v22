@@ -165,5 +165,6 @@ feedback_history.json
 logs/
 
 # Local Configuration
-config/agents.yaml
-# Keep config/agents.example.yaml if you create one later, but ignore local customizations
+# NOTE: config/agents.yaml is tracked and load-bearing (the app requires it),
+# so it is intentionally NOT ignored. Copy config/agents.example.yaml to create
+# local variants under a different name if you need per-machine overrides.

@@ -1,13 +1,13 @@
 import asyncio
 import os
-import time
 import sys
 import json
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Dict, Any
 from dotenv import load_dotenv
-from workflow import create_workflow, process_hitl_feedback
+from langgraph.errors import GraphRecursionError
+from workflow import create_workflow
 from utils.config import ConfigLoader
 
 # Ensure Unicode output works on Windows consoles where stdout may default to cp1252.
@@ -109,33 +109,6 @@ def save_session_log(session_log: Dict[str, Any]) -> str:
         print(f"Warning: Could not save session log: {str(e)}")
         return None
 
-def print_thinking_animation(message: str, duration: int = 2):
-    """Display a thinking animation with dots."""
-    for _ in range(duration):
-        for dots in range(4):
-            print(f"\r{message}{'.' * dots}   ", end="", flush=True)
-            time.sleep(0.3)
-    print("\r" + " " * (len(message) + 4), end="\r")
-
-def print_agent_transition(from_stage: str, to_stage: str):
-    """Display a visual transition between agents."""
-    print(f"\n{'-' * 20}")
-    print(f"🔄 {from_stage.upper()} → {to_stage.upper()}")
-    print(f"{'-' * 20}\n")
-
-def format_stage_name(stage: str) -> str:
-    """Convert stage name to a readable format with emoji."""
-    stage_emojis = {
-        "task_delegation": "📋",
-        "emotional_regulation": "❤️",
-        "reward_processing": "🎯",
-        "conflict_detection": "⚡",
-        "value_assessment": "💡",
-        "complete": "✅"
-    }
-    formatted_name = stage.replace("_", " ").title()
-    return f"{stage_emojis.get(stage, '🔹')} {formatted_name}"
-
 async def main(args=None):
     """Main entry point for the application."""
     try:
@@ -221,12 +194,15 @@ async def main(args=None):
                 "previous_response": "",
                 "feedback_history": feedback_history.copy(),  # HITL: Historical user feedback
                 "session_log": session_log,          # Comprehensive execution tracking
+                "completed_stages": [],              # Stages that have finished (router state)
                 "error": False
             }
-            
+
             # Process task
             try:
-                result = await workflow.ainvoke(state)
+                # recursion_limit guards against pathological routing; the router
+                # is designed to always terminate, but this is a safety net.
+                result = await workflow.ainvoke(state, config={"recursion_limit": 50})
                 
                 # Update session log with final results
                 session_log = result.get("session_log", session_log)
@@ -236,12 +212,15 @@ async def main(args=None):
                     error_content = result['response']['content'] if isinstance(result['response'], dict) and 'content' in result['response'] else result['response']
                     session_log["error"] = error_content
                     print(f"\n❌ {error_content}")
-                    
+
                     # Save session log even on error
                     log_file = save_session_log(session_log)
                     if log_file:
                         print(f"\n📝 Session log saved to: {log_file}")
-                    
+
+                    # One-shot runs must not loop back onto the same failing task.
+                    if not interactive:
+                        break
                     continue
                 
                 # Extract content from structured response
@@ -285,16 +264,33 @@ async def main(args=None):
                 if log_file:
                     print(f"\n📝 Session log saved to: {log_file}")
                         
+            except GraphRecursionError as e:
+                # The workflow failed to converge. Record it and keep the CLI alive
+                # instead of crashing the whole session.
+                error_msg = f"Workflow did not converge (recursion limit reached): {str(e)}"
+                session_log["error"] = error_msg
+                session_log["completed"] = False
+
+                log_file = save_session_log(session_log)
+                if log_file:
+                    print(f"\n📝 Session log saved to: {log_file}")
+
+                print(f"\n❌ {error_msg}")
+
+                if not interactive:
+                    break
+                continue
+
             except Exception as e:
                 # Record exception in session log
                 session_log["error"] = str(e)
                 session_log["completed"] = False
-                
+
                 # Save session log on exception
                 log_file = save_session_log(session_log)
                 if log_file:
                     print(f"\n📝 Session log saved to: {log_file}")
-                
+
                 print(f"\n❌ An error occurred: {str(e)}")
                 raise
             
@@ -311,4 +307,5 @@ async def main(args=None):
         raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Pass CLI args through so one-shot mode (`python main.py "task"`) works.
+    asyncio.run(main(sys.argv[1:]))
