@@ -109,22 +109,13 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
             await dlpfc_agent.process(test_state)
 
 @pytest.mark.asyncio
-async def test_dlpfc_agent_cancellation(dlpfc_agent, test_state):
-    """Test cancellation handling in DLPFC agent"""
+async def test_dlpfc_agent_cancellation_propagates(dlpfc_agent, test_state):
+    """CancelledError must propagate out of DLPFC.process (no longer swallowed)."""
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=asyncio.CancelledError())
-    
-    result = await dlpfc_agent.process(test_state)
-    assert result["error"]
-    
-    # Check response content
-    response = result["response"]
-    if isinstance(response, dict):
-        response_text = response["content"]
-    else:
-        response_text = response
-        
-    assert "cancelled" in response_text.lower()
+
+    with pytest.raises(asyncio.CancelledError):
+        await dlpfc_agent.process(test_state)
 
 def test_dlpfc_format_feedback_history(dlpfc_agent, test_state):
     """Test feedback history formatting"""
@@ -151,7 +142,7 @@ async def test_dlpfc_parse_subtasks(dlpfc_agent):
     2. Generate options - Assign to OFC
     3. Monitor progress - Assign to ACC
     """
-    subtasks = await dlpfc_agent._parse_subtasks(response)
+    subtasks = dlpfc_agent._parse_subtasks(response)
     assert isinstance(subtasks, list)
     assert len(subtasks) > 0
     assert all(isinstance(task, dict) for task in subtasks)
@@ -214,7 +205,7 @@ async def test_complex_subtask_assignments(dlpfc_agent):
     3. Generate final report
     """
     
-    subtasks = await dlpfc_agent._parse_subtasks(complex_response)
+    subtasks = dlpfc_agent._parse_subtasks(complex_response)
     assert isinstance(subtasks, list)
     assert len(subtasks) > 0
     
@@ -318,7 +309,7 @@ async def test_response_formatting_edge_cases(dlpfc_agent):
     ]
     
     for response in edge_case_responses:
-        formatted = await dlpfc_agent._format_response(response)
+        formatted = dlpfc_agent._format_response(response)
         assert isinstance(formatted, dict)
         assert "response" in formatted
         assert not formatted["error"]

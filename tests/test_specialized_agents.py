@@ -99,17 +99,15 @@ async def test_agent_timeout_handling(mock_env_vars, test_state):
             assert "Request timed out" in response_text
 
 @pytest.mark.asyncio
-async def test_agent_cancellation_handling(mock_env_vars, test_state):
-    """Test cancellation handling in specialized agents"""
+async def test_agent_cancellation_propagates(mock_env_vars, test_state):
+    """CancelledError (a BaseException) must propagate out of specialist agents
+    for cooperative cancellation -- it is no longer swallowed into a result."""
     agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
 
     for agent in agents:
         with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError("Test cancellation")):
-            result = await agent.process(test_state)
-            assert result["error"]
-            # Handle structured response
-            response_text = result["response"]["content"] if isinstance(result["response"], dict) else str(result["response"])
-            assert "cancelled" in response_text.lower()
+            with pytest.raises(asyncio.CancelledError):
+                await agent.process(test_state)
 
 @pytest.mark.asyncio
 async def test_agent_initialization(mock_env_vars):

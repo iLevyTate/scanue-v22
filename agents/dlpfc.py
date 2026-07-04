@@ -1,11 +1,15 @@
 from typing import Dict, Any, List
-import asyncio
+import copy
+import logging
 from langchain_core.prompts import ChatPromptTemplate
-from .base import BaseAgent
+from .base import BaseAgent, summarize_state
+
+logger = logging.getLogger(__name__)
+
 
 class DLPFCAgent(BaseAgent):
     """Dorsolateral Prefrontal Cortex Agent - Central Controller"""
-    
+
     def __init__(self):
         super().__init__(agent_name="DLPFC", model_env_key="DLPFC_MODEL")
 
@@ -14,116 +18,109 @@ class DLPFCAgent(BaseAgent):
         1. Analyzing task requirements and complexity
         2. Intelligently selecting only the necessary specialized agents
         3. Delegating subtasks efficiently based on cognitive demands
-        
+
         Current Task: {task}
         Current State: {state}
-        
+
         Previous Response (if any): {previous_response}
         User Feedback (if any): {feedback}
-        
+
         Feedback History:
         {feedback_history}
-        
+
         IMPORTANT: Only delegate to agents that are actually needed for this specific task.
-        
+
         Available specialized brain region agents:
         - VMPFC Agent: For tasks involving emotions, social situations, risk assessment, moral decisions
         - OFC Agent: For tasks involving rewards, costs, outcomes, benefits, trade-offs
         - ACC Agent: For tasks with potential conflicts, errors, competing options, monitoring
         - MPFC Agent: Always needed for final integration and value-based decision making
-        
+
         DELEGATION STRATEGY:
         - Simple factual questions: Only MPFC Agent
-        - Emotional decisions: VMPFC Agent + MPFC Agent  
+        - Emotional decisions: VMPFC Agent + MPFC Agent
         - Financial/reward decisions: OFC Agent + MPFC Agent
         - Complex choices with conflicts: VMPFC Agent + ACC Agent + MPFC Agent
         - Full cognitive processing: VMPFC Agent + OFC Agent + ACC Agent + MPFC Agent
-        
+
         REQUIRED FORMAT - You must explicitly state which agents to use:
         **AGENT DELEGATION:**
         - VMPFC Agent: [YES/NO] - [brief reason if YES]
-        - OFC Agent: [YES/NO] - [brief reason if YES]  
+        - OFC Agent: [YES/NO] - [brief reason if YES]
         - ACC Agent: [YES/NO] - [brief reason if YES]
         - MPFC Agent: YES - Always needed for final integration
-        
+
         Then provide your analysis and subtask breakdown.
         """
         return ChatPromptTemplate.from_template(template)
-    
+
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            print(f"DLPFC Agent processing state: {state}")  # Debug output
-            
-            # FUTURE ENHANCEMENT: 
-            # If we had a 'fast' model configured for simple tasks, we could check task complexity here
-            # and choose self.models['fast'] vs self.models['primary'].
-            # For now, we stick to the primary model (self.llm) to ensure consistent delegation logic.
-            
+            logger.debug("DLPFC Agent processing state: %s", state)
+
             # Get task breakdown from LLM
             response = await self.llm.ainvoke(
                 self.prompt.format_messages(
                     task=state.get("task", ""),
-                    state=state,
+                    state=summarize_state(state),
                     previous_response=state.get("previous_response", "No previous response"),
                     feedback=state.get("feedback", "No feedback provided"),
                     feedback_history=self._format_feedback_history(state.get("feedback_history", []))
                 )
             )
-            
-            print(f"DLPFC Agent received response: {response}")  # Debug output
-            
+
+            logger.debug("DLPFC Agent received response: %s", response)
+
+            # Cache the raw response for logging/debugging (mirrors BaseAgent).
+            model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown"))
+            self.last_raw_response = {
+                "model": model_name,
+                "response": response.content,
+            }
+
             # Parse response and update state
-            updated_state = await self._format_response(response.content)
-            
-            # Use 'fast' model for parsing subtasks if available, otherwise use primary
-            # (Note: _parse_subtasks is currently regex-based, but could be LLM-based in future)
-            subtasks = await self._parse_subtasks(response.content)
-            
-            print(f"Parsed subtasks: {subtasks}")  # Debug output
-            
+            updated_state = self._format_response(response.content)
+            subtasks = self._parse_subtasks(response.content)
+
+            logger.debug("Parsed subtasks: %s", subtasks)
+
             updated_state.update({
                 "subtasks": subtasks,
-                "stage": "task_delegation"
+                "stage": "task_delegation",
+                "raw_llm_response": copy.deepcopy(self.last_raw_response),
             })
-            
-            print(f"Updated state: {updated_state}")  # Debug output
+
+            logger.debug("Updated state: %s", updated_state)
             return updated_state
-            
-        except asyncio.CancelledError:
-            error_msg = "Operation was cancelled"
-            print(f"DLPFC Error: {error_msg}")  # Debug output
-            return {
-                "response": error_msg,
-                "error": True,
-                "stage": "error"
-            }
+
         except Exception as e:
+            # asyncio.CancelledError is a BaseException and intentionally
+            # propagates so cooperative cancellation still works.
             error_msg = f"Error processing request: {str(e)}"
-            print(f"DLPFC Error: {error_msg}")  # Debug output
+            logger.debug("DLPFC Error: %s", error_msg)
             return {
-                "response": error_msg,
+                "response": {"role": "assistant", "content": error_msg},
                 "error": True,
-                "stage": "error"
             }
-    
-    async def _parse_subtasks(self, response: str) -> List[Dict[str, Any]]:
+
+    def _parse_subtasks(self, response: str) -> List[Dict[str, Any]]:
         """Parse the response to extract subtasks and their assignments."""
-        print(f"Parsing subtasks from response: {response}")
-        
+        logger.debug("Parsing subtasks from response: %s", response)
+
         try:
             lines = response.split('\n')
             subtasks = []
             current_category = None
             current_subtask = None
-            
+
             # Standard brain region agent types
             brain_region_agents = ["VMPFC", "OFC", "ACC", "MPFC"]
-            
+
             for line in lines:
                 line = line.strip()
                 if not line:
                     continue
-                
+
                 # Skip section headers and formatting
                 if line.startswith('**') or line.startswith('#'):
                     if 'subtask' in line.lower():
@@ -131,14 +128,14 @@ class DLPFCAgent(BaseAgent):
                     elif 'integration' in line.lower():
                         current_category = 'integration'
                     continue
-                
+
                 # Look for actual tasks (bullet points or numbered items)
                 if line[0].isdigit() or line[0] in ['-', '*', '•']:
                     # Clean up the task text
                     task_text = line.lstrip('0123456789.-*• ').strip()
                     # Remove markdown formatting
                     task_text = task_text.replace('**', '').replace('*', '')
-                    
+
                     # Check for agent assignment in the same line
                     agent = None
                     if " - Assign to " in task_text:
@@ -149,13 +146,13 @@ class DLPFCAgent(BaseAgent):
                         # Handle format like "VMPFC: task description"
                         agent_part = task_text.split(":")[0].strip().upper()
                         task_text = ":".join(task_text.split(":")[1:]).strip()
-                        
+
                         # Extract just the agent name
                         for brain_agent in brain_region_agents:
                             if brain_agent in agent_part:
                                 agent = f"{brain_agent} Agent"
                                 break
-                    
+
                     if task_text:
                         current_subtask = {
                             "task": task_text,
@@ -163,14 +160,14 @@ class DLPFCAgent(BaseAgent):
                             "agent": agent
                         }
                         subtasks.append(current_subtask)
-                
+
                 # Look for agent assignments in following lines
                 elif current_subtask and ('agent:' in line.lower() or 'assign to' in line.lower()):
                     if 'agent:' in line.lower():
                         agent = line.split(':')[1].strip()
                     else:
                         agent = line.split('assign to')[1].strip()
-                    
+
                     # Ensure agent is one of the brain region agents
                     agent_clean = agent.replace('**', '').replace('*', '')
                     for brain_agent in brain_region_agents:
@@ -180,27 +177,23 @@ class DLPFCAgent(BaseAgent):
                     else:
                         # Default to the most appropriate agent if none specified
                         current_subtask["agent"] = "MPFC Agent"
-            
+
             # Filter out any empty or invalid tasks
             subtasks = [task for task in subtasks if task["task"] and not task["task"].lower().startswith(('list', 'agent', 'integration'))]
-            
-            print(f"\nParsed {len(subtasks)} tasks:")
+
+            logger.debug("Parsed %d tasks", len(subtasks))
             for task in subtasks:
-                print(f"- {task['category'].upper()}: {task['task']}")
-                if task['agent']:
-                    print(f"  Assigned to: {task['agent']}")
-                else:
-                    # Assign default agent if none specified
+                # Assign default agent if none specified
+                if not task['agent']:
                     task['agent'] = "MPFC Agent"
-                    print(f"  Defaulted to: {task['agent']}")
-            
+
             return subtasks
-            
+
         except Exception as e:
-            print(f"Error parsing subtasks: {str(e)}")
+            logger.debug("Error parsing subtasks: %s", e)
             return [{"task": "Error parsing subtasks", "agent": "MPFC Agent", "category": "error"}]
 
-    async def _format_response(self, response: str) -> Dict[str, Any]:
+    def _format_response(self, response: str) -> Dict[str, Any]:
         """Format the response from the LLM into a structured output."""
         sections = {
             "subtasks": [],
@@ -208,16 +201,16 @@ class DLPFCAgent(BaseAgent):
             "integration": [],
             "error": False
         }
-        
+
         try:
             current_section = None
             lines = response.split('\n')
-            
+
             for line in lines:
                 line = line.strip()
                 if not line:
                     continue
-                
+
                 # Identify sections
                 if "subtask" in line.lower():
                     current_section = "subtasks"
@@ -229,40 +222,40 @@ class DLPFCAgent(BaseAgent):
                 elif line[0].isdigit() or line[0] in ['-', '*', '•']:
                     if current_section:
                         sections[current_section].append(line.lstrip('0123456789.-*• ').strip())
-            
+
             # Format the response in a more readable way
             formatted_response = []
             if sections["subtasks"]:
                 formatted_response.append("📋 Subtasks:")
                 for task in sections["subtasks"]:
                     formatted_response.append(f"  • {task}")
-            
+
             if sections["assignments"]:
                 formatted_response.append("\n👥 Agent Assignments:")
                 for assignment in sections["assignments"]:
                     formatted_response.append(f"  • {assignment}")
-            
+
             if sections["integration"]:
                 formatted_response.append("\n🔄 Integration Plan:")
                 for step in sections["integration"]:
                     formatted_response.append(f"  • {step}")
-            
+
             # Create structured response in JSON format
             response_text = "\n".join(formatted_response)
             structured_response = {
                 "role": "assistant",
                 "content": response_text
             }
-            
+
             return {
                 "response": structured_response,
                 "error": False
             }
-            
+
         except Exception as e:
-            print(f"Error formatting response: {str(e)}")
+            logger.debug("Error formatting response: %s", e)
             structured_error = {
-                "role": "assistant", 
+                "role": "assistant",
                 "content": str(e)
             }
             return {
@@ -272,21 +265,21 @@ class DLPFCAgent(BaseAgent):
 
     def _format_feedback_history(self, history: List[Dict[str, str]]) -> str:
         """Format feedback history for HITL integration into agent prompts.
-        
+
         This method processes the persistent feedback history to provide context
         about user preferences and system performance from previous sessions.
         The formatted history informs the agent's decision-making process and
         helps maintain consistency with user expectations.
-        
+
         Args:
             history: List of feedback entries from previous interactions
-            
+
         Returns:
             str: Formatted feedback history string for prompt integration
         """
         if not history:
             return "No previous feedback"
-        
+
         formatted = []
         for entry in history:
             # STRUCTURED FEEDBACK: Format each entry with context for agent understanding

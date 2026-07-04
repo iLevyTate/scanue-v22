@@ -1,90 +1,67 @@
-#!/usr/bin/env python3
-"""Test the get_next_stage function behavior"""
+"""Unit tests for the module-level router `workflow.get_next_stage`.
 
-import sys
-import os
+The router picks the first delegated stage that has not yet completed, else END.
+Because every node appends itself to `completed_stages` on success AND failure,
+this loop always advances -- these tests lock in that termination guarantee.
+"""
 
-# Add the current directory to the path to ensure imports work
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from workflow import get_next_stage, END
 
-from workflow import get_next_delegated_stage
 
-def test_get_next_stage_function():
-    """Test the get_next_stage conditional function logic"""
-    
-    print("🔍 Testing get_next_stage function...")
-    
-    # Simulate the get_next_stage function from workflow.py
-    def get_next_stage(state):
-        if state.get("error"):
-            return "__end__"
-            
-        current_stage = state.get("stage", "")
-        if current_stage == "__end__":
-            return "__end__"
-        
-        # For task_delegation, use the first delegated agent
-        if current_stage == "task_delegation":
-            delegated_agents = state.get("delegated_agents", [])
-            result = delegated_agents[0] if delegated_agents else "__end__"
-            print(f"  task_delegation -> {result}")
-            return result
-        
-        # For other stages, get next from delegation list
-        result = get_next_delegated_stage(state, current_stage)
-        print(f"  {current_stage} -> {result}")
-        return result
-    
-    # Test the exact scenario from the log
-    delegated_agents = ['emotional_regulation', 'conflict_detection', 'value_assessment']
-    
-    print(f"Testing with delegated_agents: {delegated_agents}")
-    print()
-    
-    # Test each stage transition
-    test_states = [
-        {"stage": "task_delegation", "delegated_agents": delegated_agents, "error": False},
-        {"stage": "emotional_regulation", "delegated_agents": delegated_agents, "error": False},
-        {"stage": "conflict_detection", "delegated_agents": delegated_agents, "error": False},
-        {"stage": "value_assessment", "delegated_agents": delegated_agents, "error": False}
-    ]
-    
+DELEGATED = ["emotional_regulation", "conflict_detection", "value_assessment"]
+
+
+def test_full_sequence_advances_in_order():
+    """With nothing completed, the router returns the first delegated stage;
+    as stages complete it walks through them in order and finally ends."""
+    completed = []
     sequence = []
-    for state in test_states:
-        next_stage = get_next_stage(state)
-        sequence.append(f"{state['stage']} -> {next_stage}")
-        
-        if next_stage == "__end__":
+    # Simulate the graph completing each stage the router hands back.
+    for _ in range(len(DELEGATED) + 1):
+        nxt = get_next_stage({"delegated_agents": DELEGATED, "completed_stages": list(completed)})
+        sequence.append(nxt)
+        if nxt == END:
             break
-    
-    print("Full transition sequence:")
-    for transition in sequence:
-        print(f"  {transition}")
-    
-    expected_sequence = [
-        "task_delegation -> emotional_regulation",
-        "emotional_regulation -> conflict_detection", 
-        "conflict_detection -> value_assessment",
-        "value_assessment -> __end__"
-    ]
-    
-    print(f"\nExpected: {expected_sequence}")
-    print(f"Actual:   {sequence}")
-    print(f"Match: {sequence == expected_sequence}")
-    
-    assert sequence == expected_sequence
+        completed.append(nxt)
 
-if __name__ == "__main__":
-    print("🧠 Testing get_next_stage function behavior...")
-    
-    try:
-        success = test_get_next_stage_function()
-        if success:
-            print("\n✅ Test passed - get_next_stage function is correct")
-            print("⚠️  The issue must be elsewhere in the workflow execution")
-        else:
-            print("\n❌ Test failed - get_next_stage function has bugs")
-    except Exception as e:
-        print(f"❌ Test execution error: {e}")
-        import traceback
-        traceback.print_exc() 
+    assert sequence == [
+        "emotional_regulation",
+        "conflict_detection",
+        "value_assessment",
+        END,
+    ]
+
+
+def test_completed_stage_is_skipped_even_after_error():
+    """A stage that failed still lands in completed_stages, so the router must
+    skip it (this is the C1 infinite-loop fix)."""
+    state = {
+        "delegated_agents": DELEGATED,
+        # emotional_regulation completed (via an error path) -> must be skipped
+        "completed_stages": ["emotional_regulation"],
+    }
+    assert get_next_stage(state) == "conflict_detection"
+
+
+def test_empty_delegation_ends():
+    assert get_next_stage({"delegated_agents": [], "completed_stages": []}) == END
+    # Missing keys entirely should also end cleanly.
+    assert get_next_stage({}) == END
+
+
+def test_all_completed_ends():
+    state = {
+        "delegated_agents": DELEGATED,
+        "completed_stages": list(DELEGATED),
+    }
+    assert get_next_stage(state) == END
+
+
+def test_completed_stages_order_does_not_matter():
+    """The router uses set membership, so out-of-order completion still resolves
+    to the first *delegated* stage that is missing."""
+    state = {
+        "delegated_agents": DELEGATED,
+        "completed_stages": ["value_assessment", "emotional_regulation"],
+    }
+    assert get_next_stage(state) == "conflict_detection"

@@ -22,7 +22,7 @@ For clarity:
 - **MPFC Agent:** Value-based decision-making
 
 ## **Technical Requirements**
-- **Python:** 3.8+
+- **Python:** 3.11+ (the workflow uses `asyncio.timeout`, added in 3.11)
 - **An LLM provider**: OpenAI, Ollama (local), or HuggingFace (endpoint/TGI)
 - **Environment variables (only if needed by your provider)**:
   - OpenAI: `OPENAI_API_KEY`
@@ -46,11 +46,17 @@ For clarity:
 
 4. **Run the application:**
    ```bash
+   # Interactive mode (prompts for a task, then offers to collect feedback)
    python main.py
+
+   # One-shot mode (runs a single task non-interactively and exits)
+   python main.py "How should I structure my team's weekly meetings?"
    ```
 
 ## **Configuration**
-The primary configuration is `config/agents.yaml`. Each agent can use a different provider/model:
+The primary configuration is `config/agents.yaml` (a ready-to-edit copy is
+provided at `config/agents.example.yaml`). Each agent can use a different
+provider/model:
 
 - **Ollama (local)**: set `provider: "ollama"` and (optionally) `base_url` (default is `http://localhost:11434`)
 - **OpenAI**: set `provider: "openai"` and either set `OPENAI_API_KEY` or put `api_key:` in the YAML
