@@ -135,6 +135,31 @@ def _session_log_delta(state: Dict[str, Any], stage_log: Dict) -> Dict[str, Any]
     }
 
 
+# Semantic keywords used only when DLPFC does not emit the structured YES/NO block.
+#
+# 'value' and 'worth' are deliberately NOT OFC keywords: MPFC *is* the value
+# assessment agent, so any DLPFC text describing MPFC's own role ("make a
+# value-based decision on how to proceed") used to drag reward_processing into
+# runs that never needed it. 'outcome' is omitted for the same reason -- it is
+# generic enough to appear in nearly any delegation summary.
+SEMANTIC_PATTERNS = {
+    'VMPFC': ['emotional', 'feeling', 'social', 'moral', 'risk', 'anxiety', 'fear', 'empathy', 'interpersonal'],
+    'OFC': ['reward', 'benefit', 'cost', 'trade', 'tradeoff', 'financial', 'profit', 'loss'],
+    'ACC': ['conflict', 'error', 'mistake', 'competing', 'contradiction', 'monitor'],
+    'MPFC': []  # Always included
+}
+
+# Inflections allowed after a keyword stem, so "rewards"/"conflicts"/"emotionally"
+# match while a bare substring scan can no longer fire on an unrelated word
+# (e.g. "gloss" matching "loss", or "morale" matching "moral").
+_KEYWORD_SUFFIXES = r"(?:s|es|ed|ing|ly|al|ally)?"
+
+
+def _keyword_present(keyword: str, text_lower: str) -> bool:
+    """Word-boundary-anchored keyword match, tolerant of common inflections."""
+    return re.search(rf"\b{re.escape(keyword)}{_KEYWORD_SUFFIXES}\b", text_lower) is not None
+
+
 def parse_agent_assignments(dlpfc_response: str) -> list:
     """Parse the DLPFC agent's response to extract which agents should be called.
 
@@ -184,21 +209,13 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
     if not structured_found:
         logger.debug("Using semantic analysis fallback...")
 
-        # Enhanced semantic patterns for each agent
-        semantic_patterns = {
-            'VMPFC': ['emotional', 'feeling', 'social', 'moral', 'risk', 'anxiety', 'fear', 'empathy', 'interpersonal'],
-            'OFC': ['reward', 'benefit', 'cost', 'outcome', 'trade', 'financial', 'profit', 'loss', 'value', 'worth'],
-            'ACC': ['conflict', 'error', 'mistake', 'competing', 'contradiction', 'monitor', 'attention', 'focus'],
-            'MPFC': []  # Always included
-        }
-
-        for agent_name, keywords in semantic_patterns.items():
+        for agent_name, keywords in SEMANTIC_PATTERNS.items():
             if agent_name == 'MPFC':  # Always include MPFC
                 continue
 
             # Check if any semantic keywords are present
             for keyword in keywords:
-                if keyword in response_lower:
+                if _keyword_present(keyword, response_lower):
                     stage_name = agent_map[agent_name]
                     if stage_name not in agent_assignments:
                         agent_assignments.append(stage_name)
@@ -233,9 +250,9 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
         emotional_indicators = ['feel', 'emotion', 'relationship', 'social', 'personal', 'family', 'friend']
         decision_indicators = ['decide', 'choice', 'option', 'should', 'better', 'prefer', 'recommend']
 
-        is_complex = any(word in response_lower for word in complexity_indicators)
-        has_emotional = any(word in response_lower for word in emotional_indicators)
-        is_decision = any(word in response_lower for word in decision_indicators)
+        is_complex = any(_keyword_present(word, response_lower) for word in complexity_indicators)
+        has_emotional = any(_keyword_present(word, response_lower) for word in emotional_indicators)
+        is_decision = any(_keyword_present(word, response_lower) for word in decision_indicators)
 
         if is_complex:
             # Complex tasks get full processing
@@ -304,9 +321,19 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
 
         print("✅ Task delegation complete")
 
-        # Parse the response to determine which agents to call
+        # Parse the RAW LLM reply to determine which agents to call.
+        #
+        # DLPFCAgent._format_response() rebuilds the reply into a Subtasks /
+        # Agent Assignments / Integration Plan digest and keeps a bullet line only
+        # if a recognized section header preceded it. The prompt's delegation block
+        # is headed "**AGENT DELEGATION:**", which matches none of those keywords,
+        # so every "- VMPFC Agent: YES" line is dropped from the digest. Parsing the
+        # digest therefore threw away the decision and silently collapsed almost
+        # every run to MPFC-only. The raw text is cached by the agent for exactly
+        # this reason; the formatted content is only a last-resort fallback.
+        raw_reply = (result.get("raw_llm_response") or {}).get("response")
         response_content = result.get("response", {}).get("content", "")
-        delegated_agents = parse_agent_assignments(response_content)
+        delegated_agents = parse_agent_assignments(raw_reply or response_content)
 
         print(f"📋 Delegating to agents: {', '.join(delegated_agents)}")
 

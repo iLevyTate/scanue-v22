@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from workflow import (
     create_workflow, process_hitl_feedback, NODE_TIMEOUT_SECONDS,
+    parse_agent_assignments,
     process_task_delegation, process_emotional_regulation,
     process_reward_processing, process_conflict_detection, process_value_assessment,
 )
@@ -290,6 +291,55 @@ async def test_process_task_delegation_success(mock_env_vars, mock_state):
         "emotional_regulation", "reward_processing", "conflict_detection", "value_assessment",
     ]
     assert "task_delegation" in result["completed_stages"]
+
+
+# A DLPFC reply that follows the REQUIRED FORMAT in the agent's own prompt.
+SPEC_FORMAT_DLPFC_REPLY = """**AGENT DELEGATION:**
+- VMPFC Agent: YES - the decision is emotionally loaded
+- OFC Agent: NO
+- ACC Agent: YES - the stakeholders want incompatible things
+- MPFC Agent: YES - Always needed for final integration
+
+**Analysis:**
+Two teams disagree about next quarter's roadmap.
+
+**Subtask Breakdown:**
+1. Map each stakeholder position
+2. Draft a resolution memo
+"""
+
+
+@pytest.mark.asyncio
+async def test_c1_regression_structured_delegation_reaches_the_router(mock_state):
+    """C1: the router must honor DLPFC's structured AGENT DELEGATION block.
+
+    `DLPFCAgent._format_response()` rebuilds the reply into a Subtasks /
+    Agent Assignments / Integration digest, keeping a bullet only when a
+    recognized section header preceded it. The delegation block is headed
+    "**AGENT DELEGATION:**", which matches none of those keywords, so every
+    "- VMPFC Agent: YES" line is dropped. Parsing that digest instead of the raw
+    reply silently collapsed nearly every run to MPFC-only.
+
+    The real agent runs here against a stubbed LLM, so the formatter and the
+    workflow wiring are both exercised.
+    """
+    llm = AsyncMock()
+    llm.model_name = "test-model"
+    llm.ainvoke = AsyncMock(return_value=MagicMock(content=SPEC_FORMAT_DLPFC_REPLY))
+
+    with patch("utils.config.ConfigLoader.load_config", return_value=TEST_CONFIG), \
+         patch("agents.factory.LLMFactory.create_llm", return_value=llm):
+        result = await process_task_delegation(mock_state)
+
+    assert result["delegated_agents"] == [
+        "emotional_regulation", "conflict_detection", "value_assessment",
+    ]
+
+    # Guard the guard: confirm the formatted digest really does lose the signal,
+    # so this test keeps failing if the parse source regresses to the digest.
+    digest = result["response"]["content"]
+    assert "vmpfc" not in digest.lower()
+    assert parse_agent_assignments(digest) == ["value_assessment"]
 
 
 @pytest.mark.asyncio
