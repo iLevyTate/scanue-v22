@@ -290,8 +290,18 @@ async def main(args=None):
                             # PERSISTENT LEARNING: Add feedback to cross-session history
                             # via the single shared implementation, so entries from
                             # the CLI and the workflow always have the same shape.
+                            # `stage` in the returned state is still the entry
+                            # stage -- no node updates it -- so every entry would
+                            # be tagged "task_delegation". The response the user
+                            # is reacting to came from the last stage that ran.
+                            completed = result.get("completed_stages") or []
                             feedback_state = process_hitl_feedback(
-                                {**result, "feedback_history": feedback_history, "session_log": session_log},
+                                {
+                                    **result,
+                                    "stage": completed[-1] if completed else result.get("stage", "unknown"),
+                                    "feedback_history": feedback_history,
+                                    "session_log": session_log,
+                                },
                                 feedback,
                             )
                             feedback_history = feedback_state["feedback_history"]

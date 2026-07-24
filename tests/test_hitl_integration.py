@@ -107,7 +107,9 @@ def mock_env_vars():
     mock_llm = AsyncMock()
     mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="test response"))
 
+    # LLMFactory imports provider SDKs lazily inside each branch, so patch the
+    # source module rather than a factory-module attribute.
     with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}), \
          patch("utils.config.ConfigLoader.load_config", return_value=test_config), \
-         patch("agents.factory.ChatOpenAI", return_value=mock_llm):
+         patch("langchain_openai.ChatOpenAI", return_value=mock_llm):
         yield

@@ -1,19 +1,22 @@
 from typing import Dict, Any, Optional
 import os
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+
 
 class LLMFactory:
     """Factory for creating LLM instances based on configuration.
-    
+
     Supports multiple providers including OpenAI, Ollama, and HuggingFace.
+
+    Provider SDKs are imported lazily inside each branch. Importing all three at
+    module scope forced an Ollama-only user to install langchain-openai and
+    langchain-huggingface (and its transformers/tokenizers dependency chain)
+    just to start the app.
     """
-    
+
     @staticmethod
     def create_llm(config: Dict[str, Any]) -> Any:
         """Create an LLM instance based on the provided configuration.
-        
+
         Args:
             config: Dictionary containing model configuration:
                 - provider: 'openai', 'ollama', or 'huggingface'
@@ -21,18 +24,23 @@ class LLMFactory:
                 - temperature: Model temperature (default: 0.7)
                 - base_url: Optional base URL for local providers
                 - api_key: Optional API key (overrides env vars)
-                
+                - timeout: Request timeout in seconds
+                - max_retries: Retry count (OpenAI only)
+
         Returns:
             LangChain ChatModel instance
         """
+        config = config or {}
         provider = config.get("provider", "openai").lower()
         model_name = config.get("name")
         temperature = config.get("temperature", 0.7)
-        
+
         if not model_name:
             raise ValueError("Model name must be specified in configuration")
-            
+
         if provider == "openai":
+            from langchain_openai import ChatOpenAI
+
             return ChatOpenAI(
                 model=model_name,
                 temperature=temperature,
@@ -40,16 +48,24 @@ class LLMFactory:
                 timeout=config.get("timeout", 30.0),
                 max_retries=config.get("max_retries", 3)
             )
-            
+
         elif provider == "ollama":
+            from langchain_ollama import ChatOllama
+
+            # ChatOllama has no `timeout` field and its model_config sets
+            # extra="ignore", so passing timeout= was silently dropped and local
+            # runs had no client-side timeout at all. The underlying ollama
+            # client takes it via client_kwargs.
             return ChatOllama(
                 model=model_name,
                 temperature=temperature,
                 base_url=config.get("base_url", "http://localhost:11434"),
-                timeout=config.get("timeout", 120.0)  # Local models might be slower
+                client_kwargs={"timeout": config.get("timeout", 120.0)}  # Local models might be slower
             )
-            
+
         elif provider == "huggingface":
+            from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+
             # Use HuggingFaceEndpoint for inference API or local TGI
             llm = HuggingFaceEndpoint(
                 repo_id=model_name,
@@ -58,7 +74,6 @@ class LLMFactory:
                 timeout=config.get("timeout", 120.0)
             )
             return ChatHuggingFace(llm=llm)
-            
+
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
-

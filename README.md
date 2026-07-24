@@ -22,7 +22,7 @@ For clarity:
 - **MPFC Agent:** Value-based decision-making
 
 ## **Technical Requirements**
-- **Python:** 3.11+ (the workflow uses `asyncio.timeout`, added in 3.11)
+- **Python:** 3.11+
 - **An LLM provider**: OpenAI, Ollama (local), or HuggingFace (endpoint/TGI)
 - **Environment variables (only if needed by your provider)**:
   - OpenAI: `OPENAI_API_KEY`
@@ -78,6 +78,17 @@ See `docs/local_models.md` for examples and recommendations.
 Run the test suite:
 ```bash
 pytest tests/
+```
+
+The suite runs offline — no provider is contacted and no API key is required.
+CI runs it on every push and pull request across Python 3.11–3.13.
+
+## **Troubleshooting**
+Diagnostics are logged to stderr. The default level is `WARNING`; raise it to see
+prompt construction, routing decisions, and provider traffic:
+
+```bash
+SCANUE_LOG_LEVEL=DEBUG python main.py "your task"
 ```
 
 ## **Architecture**

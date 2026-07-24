@@ -26,9 +26,11 @@ TEST_CONFIG = {
 
 @pytest.fixture
 def mock_env_vars():
+    # LLMFactory imports provider SDKs lazily inside each branch, so patch the
+    # source module rather than a factory-module attribute.
     with patch.dict('os.environ', {'OPENAI_API_KEY': 'test-key'}), \
          patch('utils.config.ConfigLoader.load_config', return_value=TEST_CONFIG), \
-         patch('agents.factory.ChatOpenAI', return_value=mock_chat_openai):
+         patch('langchain_openai.ChatOpenAI', return_value=mock_chat_openai):
         yield
 
 
