@@ -56,7 +56,11 @@ class DLPFCAgent(BaseAgent):
 
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            logger.debug("DLPFC Agent processing state: %s", state)
+            # Log the compact summary rather than the whole state dict: the raw
+            # state carries the full session log and feedback history, which is
+            # both unreadable and needlessly sensitive now that logging is wired
+            # up to a real handler.
+            logger.debug("DLPFC Agent processing:\n%s", summarize_state(state))
 
             # Get task breakdown from LLM
             response = await self.llm.ainvoke(
@@ -97,7 +101,7 @@ class DLPFCAgent(BaseAgent):
             # asyncio.CancelledError is a BaseException and intentionally
             # propagates so cooperative cancellation still works.
             error_msg = f"Error processing request: {str(e)}"
-            logger.debug("DLPFC Error: %s", error_msg)
+            logger.exception("DLPFC failed to process request")
             return {
                 "response": {"role": "assistant", "content": error_msg},
                 "error": True,
@@ -190,7 +194,7 @@ class DLPFCAgent(BaseAgent):
             return subtasks
 
         except Exception as e:
-            logger.debug("Error parsing subtasks: %s", e)
+            logger.exception("Error parsing subtasks: %s", e)
             return [{"task": "Error parsing subtasks", "agent": "MPFC Agent", "category": "error"}]
 
     def _format_response(self, response: str) -> Dict[str, Any]:
@@ -253,7 +257,7 @@ class DLPFCAgent(BaseAgent):
             }
 
         except Exception as e:
-            logger.debug("Error formatting response: %s", e)
+            logger.exception("Error formatting DLPFC response")
             structured_error = {
                 "role": "assistant",
                 "content": str(e)

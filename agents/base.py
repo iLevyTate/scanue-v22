@@ -71,7 +71,15 @@ class BaseAgent(ABC):
                 try:
                     self.models[model_type] = LLMFactory.create_llm(config)
                 except Exception as e:
-                    logger.debug("Error initializing %s model for %s: %s", model_type, agent_name, e)
+                    # A model that cannot be constructed is a real problem (bad
+                    # provider name, missing credentials, unreachable base_url).
+                    # Logging at debug hid it entirely. If this was the primary
+                    # model the fallback path below re-raises; for secondary
+                    # models a warning is the only signal the user ever gets.
+                    logger.warning(
+                        "Could not initialize '%s' model for agent %s: %s",
+                        model_type, agent_name, e,
+                    )
 
         # Fallback/Legacy Initialization if no primary model found
         if "primary" not in self.models:
@@ -124,7 +132,7 @@ class BaseAgent(ABC):
             return result
         except asyncio.TimeoutError:
             error_msg = "Request timed out. Please try again."
-            logger.debug("Error: %s", error_msg)
+            logger.warning("%s LLM call timed out after %ss", self.agent_name, AGENT_LLM_TIMEOUT_SECONDS)
             return {
                 "response": {"role": "assistant", "content": error_msg},
                 "raw_llm_response": None,
@@ -134,7 +142,7 @@ class BaseAgent(ABC):
             # asyncio.CancelledError is a BaseException and intentionally
             # propagates so cooperative cancellation still works.
             error_msg = f"Error processing request: {str(e)}"
-            logger.debug("Error: %s", error_msg)
+            logger.exception("%s failed to process request", self.agent_name)
             return {
                 "response": {"role": "assistant", "content": error_msg},
                 "raw_llm_response": None,

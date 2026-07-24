@@ -305,7 +305,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
         # Check for agent-reported errors
         if result.get("error"):
             error_msg = result.get("response", {}).get("content", "Unknown error")
-            logger.debug("Task delegation reported error: %s", error_msg)
+            logger.warning("Task delegation reported error: %s", error_msg)
             agent_errors["DLPFC"] = error_msg
             if stage_log:
                 stage_log = log_stage_end(stage_log, result, error_msg)

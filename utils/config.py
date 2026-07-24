@@ -58,11 +58,14 @@ class ConfigLoader:
             Dict containing model configurations for the agent. This is a deep
             copy of the cached config so callers can never mutate shared state.
         """
-        config = cls.load_config()
-        agent_config = copy.deepcopy(config.get("agents", {}).get(agent_name, {}))
+        config = cls.load_config() or {}
+        agents = config.get("agents") or {}
+        agent_config = copy.deepcopy(agents.get(agent_name) or {})
 
-        # Ensure 'models' key exists
-        if "models" not in agent_config:
+        # Ensure 'models' is a usable mapping. Testing `"models" not in ...` was
+        # not enough: a commented-out block leaves `models:` present with value
+        # None, which then raised AttributeError on the next .get()/.items().
+        if not agent_config.get("models"):
             agent_config["models"] = {}
 
         return agent_config
@@ -85,7 +88,7 @@ class ConfigLoader:
                 to a paid OpenAI model -- a missing config is a hard error.)
         """
         agent_config = cls.get_agent_config(agent_name)
-        model_config = agent_config.get("models", {}).get(model_type)
+        model_config = (agent_config.get("models") or {}).get(model_type)
 
         # If configuration exists, return it
         if model_config:

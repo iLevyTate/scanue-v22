@@ -150,13 +150,16 @@ async def main(args=None):
         # Validate provider credentials based on configured agents/models.
         # This allows fully-local setups (e.g., Ollama) to run without OPENAI_API_KEY.
         config = ConfigLoader.load_config()
-        agents_cfg = (config or {}).get("agents", {})
+        # Every level here can legitimately be null in hand-edited YAML (an
+        # agent with its whole `models:` block commented out, for example), so
+        # coerce rather than assume a mapping.
+        agents_cfg = (config or {}).get("agents") or {}
 
         openai_models_need_key = []
         hf_models_need_token = []
 
         for agent_name, agent_cfg in agents_cfg.items():
-            for model_type, model_cfg in (agent_cfg or {}).get("models", {}).items():
+            for model_type, model_cfg in ((agent_cfg or {}).get("models") or {}).items():
                 provider = (model_cfg or {}).get("provider", "openai").lower()
                 if provider == "openai":
                     if not (model_cfg or {}).get("api_key") and not os.getenv("OPENAI_API_KEY"):
