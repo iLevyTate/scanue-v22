@@ -108,6 +108,57 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
         async with asyncio.timeout(0.001):
             await dlpfc_agent.process(test_state)
 
+SPEC_FORMAT_REPLY = """**AGENT DELEGATION:**
+- VMPFC Agent: YES - emotionally loaded
+- OFC Agent: NO
+- ACC Agent: YES - the stated goals conflict
+- MPFC Agent: YES - Always needed for final integration
+
+**Analysis:**
+The financial gap is modest but the wellbeing gain compounds.
+
+**Subtask Breakdown:**
+1. Weigh the personal impact of the pay cut
+2. Surface the contradiction between stated goals
+"""
+
+
+def test_delegation_block_is_not_parsed_as_subtasks(dlpfc_agent):
+    """The AGENT DELEGATION block holds routing decisions, not work items.
+
+    Without skipping it, "- VMPFC Agent: YES - emotionally loaded" became a
+    subtask literally named "YES - emotionally loaded", and a bare "NO" became
+    another. This only became user-visible once subtasks started being
+    propagated into workflow state.
+    """
+    subtasks = dlpfc_agent._parse_subtasks(SPEC_FORMAT_REPLY)
+    texts = [s["task"] for s in subtasks]
+
+    assert texts == [
+        "Weigh the personal impact of the pay cut",
+        "Surface the contradiction between stated goals",
+    ]
+    assert not any(t.strip() in {"NO", "YES"} or t.startswith(("YES", "NO")) for t in texts)
+
+
+def test_unknown_markdown_header_is_not_emitted_as_a_bullet(dlpfc_agent):
+    """"**Analysis:**" starts with '*', so it fell through to the bullet branch
+    and was rendered as a content bullet under the previous section's heading
+    (e.g. "🔄 Integration Plan: • Analysis:**")."""
+    content = dlpfc_agent._format_response(SPEC_FORMAT_REPLY)["response"]["content"]
+
+    assert "Analysis:**" not in content
+    assert "• Analysis" not in content
+
+
+def test_prose_only_reply_is_not_summarized_into_nothing(dlpfc_agent):
+    """A reply with none of the expected sections used to yield empty content."""
+    prose = "I recommend taking the job; the hours matter more than the pay gap."
+    content = dlpfc_agent._format_response(prose)["response"]["content"]
+
+    assert content.strip() == prose
+
+
 @pytest.mark.asyncio
 async def test_dlpfc_applies_inner_llm_timeout(dlpfc_agent, test_state):
     """C8: DLPFC overrides process() and used to call self.llm.ainvoke directly,

@@ -26,6 +26,15 @@ except Exception:
 # fails and is reported cleanly instead of racing the outer wait_for.
 NODE_TIMEOUT_SECONDS = 45.0
 
+# Per-agent character budget for the peer insights handed to MPFC.
+#
+# MPFC is the integration stage -- synthesizing the specialists is its entire
+# job -- but the budget used to be 200 characters, so it saw roughly the first
+# 10-15% of each specialist's analysis, cut mid-sentence. The budget exists only
+# to bound prompt growth; it should be generous enough that normal responses
+# pass through whole.
+PEER_INSIGHT_CHAR_BUDGET = 4000
+
 
 class AgentState(TypedDict, total=False):
     task: str
@@ -386,7 +395,11 @@ def _prepare_value_assessment_state(state: Dict[str, Any]) -> Dict[str, Any]:
         agent_summary = "\n\nPrevious Agent Insights:\n"
         for agent_name, response in state["agent_responses"].items():
             content = response.get("content", "") if isinstance(response, dict) else str(response)
-            agent_summary += f"\n{agent_name} Agent: {content[:200]}...\n"
+            if len(content) > PEER_INSIGHT_CHAR_BUDGET:
+                # Only claim truncation when it actually happened; the ellipsis
+                # used to be appended unconditionally.
+                content = content[:PEER_INSIGHT_CHAR_BUDGET].rstrip() + " [...truncated]"
+            agent_summary += f"\n{agent_name} Agent: {content}\n"
         enhanced_state["previous_agent_insights"] = agent_summary
     return enhanced_state
 

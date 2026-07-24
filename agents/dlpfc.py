@@ -137,6 +137,11 @@ class DLPFCAgent(BaseAgent):
             subtasks = []
             current_category = None
             current_subtask = None
+            # The prompt asks for an "**AGENT DELEGATION:**" block of
+            # "- VMPFC Agent: YES - reason" lines. Those are routing decisions,
+            # not work items -- without this flag they were parsed as subtasks
+            # named "YES - reason" / "NO".
+            in_delegation_block = False
 
             # Standard brain region agent types
             brain_region_agents = ["VMPFC", "OFC", "ACC", "MPFC"]
@@ -148,10 +153,14 @@ class DLPFCAgent(BaseAgent):
 
                 # Skip section headers and formatting
                 if line.startswith('**') or line.startswith('#'):
+                    in_delegation_block = 'delegation' in line.lower()
                     if 'subtask' in line.lower():
                         current_category = 'subtask'
                     elif 'integration' in line.lower():
                         current_category = 'integration'
+                    continue
+
+                if in_delegation_block:
                     continue
 
                 # Look for actual tasks (bullet points or numbered items)
@@ -236,6 +245,8 @@ class DLPFCAgent(BaseAgent):
                 if not line:
                     continue
 
+                is_header = line.startswith('**') or line.startswith('#')
+
                 # Identify sections
                 if "subtask" in line.lower():
                     current_section = "subtasks"
@@ -243,6 +254,13 @@ class DLPFCAgent(BaseAgent):
                     current_section = "assignments"
                 elif "integration" in line.lower():
                     current_section = "integration"
+                elif is_header:
+                    # A markdown header that names no known section ends the
+                    # current one. Without this it fell through to the bullet
+                    # branch below (it starts with '*') and was emitted as a
+                    # content bullet -- e.g. "**Analysis:**" rendered as
+                    # "• Analysis:**" under the previous section's heading.
+                    current_section = None
                 # Add content to appropriate section
                 elif line[0].isdigit() or line[0] in ['-', '*', '•']:
                     if current_section:
@@ -265,8 +283,11 @@ class DLPFCAgent(BaseAgent):
                 for step in sections["integration"]:
                     formatted_response.append(f"  • {step}")
 
-            # Create structured response in JSON format
-            response_text = "\n".join(formatted_response)
+            # Create structured response in JSON format. If none of the expected
+            # sections were found, fall back to the raw reply rather than
+            # handing back an empty string -- a model that answers in prose
+            # (or in an unexpected layout) used to be summarized into nothing.
+            response_text = "\n".join(formatted_response) if formatted_response else response.strip()
             structured_response = {
                 "role": "assistant",
                 "content": response_text

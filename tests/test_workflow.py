@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from workflow import (
     create_workflow, process_hitl_feedback, NODE_TIMEOUT_SECONDS,
-    parse_agent_assignments,
+    parse_agent_assignments, _prepare_value_assessment_state, PEER_INSIGHT_CHAR_BUDGET,
     process_task_delegation, process_emotional_regulation,
     process_reward_processing, process_conflict_detection, process_value_assessment,
 )
@@ -342,6 +342,35 @@ async def test_c1_regression_structured_delegation_reaches_the_router(mock_state
     digest = result["response"]["content"]
     assert "vmpfc" not in digest.lower()
     assert parse_agent_assignments(digest) == ["value_assessment"]
+
+
+def test_mpfc_receives_peer_insights_in_full():
+    """MPFC is the integration stage, but the peer-insight budget was 200 chars,
+    so it saw roughly the first 10-15% of each specialist's analysis, cut
+    mid-sentence."""
+    vmpfc = "The emotional stakes here are substantial. " * 30
+    state = {
+        "task": "t",
+        "agent_responses": {"VMPFC": {"role": "assistant", "content": vmpfc}},
+    }
+
+    insights = _prepare_value_assessment_state(state)["previous_agent_insights"]
+
+    assert len(vmpfc) > 1000  # a realistic specialist response
+    assert vmpfc.strip() in insights
+    assert "truncated" not in insights
+
+
+def test_peer_insights_are_truncated_only_when_over_budget():
+    """The ellipsis used to be appended unconditionally, so short responses were
+    labelled as truncated when they were complete."""
+    short = {"task": "t", "agent_responses": {"VMPFC": {"content": "Brief."}}}
+    assert "truncated" not in _prepare_value_assessment_state(short)["previous_agent_insights"]
+
+    long = {"task": "t", "agent_responses": {"VMPFC": {"content": "x" * (PEER_INSIGHT_CHAR_BUDGET + 50)}}}
+    insights = _prepare_value_assessment_state(long)["previous_agent_insights"]
+    assert "[...truncated]" in insights
+    assert len(insights) < PEER_INSIGHT_CHAR_BUDGET + 200
 
 
 @pytest.mark.asyncio
