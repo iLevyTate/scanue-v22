@@ -155,21 +155,24 @@ async def test_feedback_processing(mock_env_vars):
 
 
 @pytest.mark.asyncio
-async def test_error_handling(mock_env_vars):
-    """Test error handling during workflow execution."""
+async def test_error_handling_keeps_interactive_session_alive(mock_env_vars):
+    """A workflow exception is reported but does not tear down the CLI.
+
+    A transient provider error used to propagate out of `main()` and kill the
+    whole interactive session; only GraphRecursionError was survivable. The user
+    should be able to try another task instead.
+    """
     mock_workflow = MagicMock()
     mock_workflow.ainvoke = AsyncMock(side_effect=Exception("Test error"))
 
-    with patch("sys.exit"), \
-         patch("main.create_workflow", return_value=mock_workflow), \
+    with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: dict(MOCK_SESSION)), \
          patch("main.save_session_log", return_value="test_log_file.json"), \
-         patch("builtins.input", side_effect=["test task"]), \
+         patch("builtins.input", side_effect=["test task", "exit"]), \
          patch("builtins.print") as mock_print:
-        try:
-            await main()
-        except Exception as e:
-            assert "Test error" in str(e)
+        # Returns normally: the loop survives and the user types 'exit'.
+        await main()
 
         error_calls = [
             call_args for call_args in mock_print.call_args_list
@@ -178,6 +181,85 @@ async def test_error_handling(mock_env_vars):
         assert len(error_calls) > 0
 
     assert mock_workflow.ainvoke.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_one_shot_workflow_exception_exits_nonzero(mock_env_vars):
+    """The same failure in one-shot mode exits non-zero so scripts/CI detect it."""
+    mock_workflow = MagicMock()
+    mock_workflow.ainvoke = AsyncMock(side_effect=Exception("Test error"))
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: dict(MOCK_SESSION)), \
+         patch("main.save_session_log", return_value="test_log_file.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        with pytest.raises(SystemExit) as excinfo:
+            await main(["a task"])
+
+    assert excinfo.value.code == 1
+    assert mock_workflow.ainvoke.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_argv_task_exits_instead_of_looping(mock_env_vars, mock_workflow):
+    """C2 regression: `python main.py ""` used to spin forever.
+
+    One-shot mode re-reads argv[0] on every iteration, so an empty task hit
+    `continue` with no exit condition and looped printing the same error.
+    """
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        with pytest.raises(SystemExit) as excinfo:
+            await main([""])
+
+    assert excinfo.value.code == 1
+    mock_workflow.ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_one_shot_task_is_stripped(mock_env_vars, mock_workflow):
+    """Whitespace-only argv is empty, and a padded task is trimmed.
+
+    Only the interactive branch used to call .strip().
+    """
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        with pytest.raises(SystemExit):
+            await main(["   "])
+    mock_workflow.ainvoke.assert_not_called()
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: dict(MOCK_SESSION)), \
+         patch("main.save_session_log", return_value="test_log_file.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["  padded task  "])
+    assert mock_workflow.ainvoke.call_args[0][0]["task"] == "padded task"
+
+
+@pytest.mark.asyncio
+async def test_errored_run_is_not_logged_as_completed(mock_env_vars):
+    """C10: `completed` was set True before the error check, so failed runs were
+    recorded in logs/ as successful."""
+    mock_workflow = AsyncMock()
+    mock_workflow.ainvoke = AsyncMock(return_value={
+        "response": {"role": "assistant", "content": "final synthesis failed"},
+        "error": True,
+    })
+    saved = {}
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: dict(MOCK_SESSION)), \
+         patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["failing task"])
+
+    assert saved["completed"] is False
+    assert saved["error"] == "final synthesis failed"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import sys
 import json
@@ -26,6 +27,28 @@ load_dotenv()
 # File to store persistent feedback history
 FEEDBACK_HISTORY_FILE = "feedback_history.json"
 LOGS_DIRECTORY = "logs"
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    """Attach a stderr handler so the library's diagnostics are actually visible.
+
+    Every module logs through `logging`, but nothing ever configured the root
+    logger, so the default WARNING threshold silently discarded every message --
+    including genuine failures such as a model that could not be constructed.
+    Level is taken from SCANUE_LOG_LEVEL (default WARNING); an unrecognized value
+    falls back to WARNING rather than crashing at startup.
+    """
+    level = logging.getLevelName(os.getenv("SCANUE_LOG_LEVEL", "WARNING").upper())
+    if not isinstance(level, int):
+        level = logging.WARNING
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
 
 def load_feedback_history():
     """Load persistent feedback history from JSON file for HITL integration.
@@ -61,6 +84,17 @@ def save_feedback_history(feedback_history):
             json.dump(feedback_history, f)
     except Exception as e:
         print(f"Warning: Could not save feedback history: {str(e)}")
+
+def _response_content(response: Any) -> Any:
+    """Extract the text of a response that may be structured or already plain.
+
+    Agents return ``{"role": ..., "content": ...}``, but error paths and older
+    callers may hand back a bare string, so both shapes are accepted.
+    """
+    if isinstance(response, dict) and "content" in response:
+        return response["content"]
+    return response
+
 
 def create_session_log(task: str) -> Dict[str, Any]:
     """Create comprehensive session log for workflow execution tracking.
@@ -111,6 +145,7 @@ def save_session_log(session_log: Dict[str, Any]) -> str:
 
 async def main(args=None):
     """Main entry point for the application."""
+    configure_logging()
     try:
         # Validate provider credentials based on configured agents/models.
         # This allows fully-local setups (e.g., Ollama) to run without OPENAI_API_KEY.
@@ -165,16 +200,20 @@ async def main(args=None):
         while True:
             # Get task from command line args or user input
             if not interactive:
-                task = args[0]
+                task = args[0].strip()
             else:
                 print("Please describe your task or issue:")
                 print(">")
                 task = input().strip()
-                
+
             if not task:
                 print("❌ Task cannot be empty. Please try again.")
+                # One-shot mode re-reads the same argv every iteration, so
+                # `continue` here would spin forever on `python main.py ""`.
+                if not interactive:
+                    sys.exit(1)
                 continue
-                
+
             if task.lower() == "exit":
                 print("👋 Thank you for using SCANUE-V. Goodbye!")
                 break
@@ -204,12 +243,14 @@ async def main(args=None):
                 # is designed to always terminate, but this is a safety net.
                 result = await workflow.ainvoke(state, config={"recursion_limit": 50})
                 
-                # Update session log with final results
+                # Update session log with final results. A run that reported an
+                # error is not "completed" -- recording it as such made failed
+                # runs indistinguishable from successful ones in logs/.
                 session_log = result.get("session_log", session_log)
-                session_log["completed"] = True
-                
+                session_log["completed"] = not result.get("error")
+
                 if result.get("error"):
-                    error_content = result['response']['content'] if isinstance(result['response'], dict) and 'content' in result['response'] else result['response']
+                    error_content = _response_content(result.get("response"))
                     session_log["error"] = error_content
                     print(f"\n❌ {error_content}")
 
@@ -224,10 +265,10 @@ async def main(args=None):
                     continue
                 
                 # Extract content from structured response
-                response_content = result['response']['content'] if isinstance(result['response'], dict) and 'content' in result['response'] else result['response']
-                
+                response_content = _response_content(result.get("response"))
+
                 # Store final response in session log
-                session_log["final_response"] = result["response"]
+                session_log["final_response"] = result.get("response")
                     
                 # Always present the response and offer feedback option
                 print(f"\n✅ Result: {response_content}")
@@ -291,9 +332,18 @@ async def main(args=None):
                 if log_file:
                     print(f"\n📝 Session log saved to: {log_file}")
 
+                logger.exception("Workflow raised an exception")
                 print(f"\n❌ An error occurred: {str(e)}")
-                raise
-            
+
+                # A transient provider error should not tear down an interactive
+                # session -- the user can just try another task. One-shot runs
+                # still exit non-zero so scripts and CI can detect the failure.
+                if not interactive:
+                    sys.exit(1)
+                print("\n↩️  You can try again with a different task.\n")
+                continue
+
+
             print("\n✨ Processing complete! Type 'exit' to quit or enter a new task.\n")
             
             # If using command line args, exit after processing
