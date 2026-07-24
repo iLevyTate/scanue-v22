@@ -345,6 +345,10 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
             "delegated_agents": delegated_agents,
             "agent_responses": {},
             "agent_errors": agent_errors,
+            # `subtasks` is a declared AgentState key and DLPFC parses it out of
+            # the reply, but the delta used to omit it -- so the parsed subtasks
+            # were computed and then discarded on every run.
+            "subtasks": result.get("subtasks", []),
             "completed_stages": completed_stages + ["task_delegation"],
         }
         delta.update(_session_log_delta(state, stage_log))
@@ -562,10 +566,17 @@ def process_hitl_feedback(state: Dict[str, Any], feedback: str) -> Dict[str, Any
     # Extract content from the response if it's structured
     response_content = state["response"]["content"] if isinstance(state.get("response"), dict) and "content" in state["response"] else state.get("response", "")
 
-    # Create feedback entry
+    # Create feedback entry.
+    #
+    # `stage` and `timestamp` must BOTH be present. main.py used to build its own
+    # entry inline with `stage` but no `timestamp`, while this function wrote
+    # `timestamp` but no `stage` -- so the two producers emitted different record
+    # shapes and DLPFC's history formatter (which reads `stage`) rendered
+    # "Stage: unknown" for anything this path wrote.
     feedback_entry = {
         "response": response_content,
         "feedback": feedback,
+        "stage": state.get("stage", "unknown"),
         "timestamp": datetime.now().isoformat()
     }
 

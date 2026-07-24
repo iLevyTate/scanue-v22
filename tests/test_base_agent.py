@@ -108,6 +108,49 @@ async def test_base_agent_cancellation_propagates(test_agent, test_state):
             await test_agent.process(test_state)
 
 
+@pytest.mark.asyncio
+async def test_feedback_history_is_rendered_as_text_not_a_repr(mock_env_vars):
+    """C11: BaseAgent passed the raw list into the template, so the prompt got a
+    Python repr (`[{'response': ...}]`). Only DLPFC formatted it properly."""
+    class HistoryAgent(TestAgent):
+        def _create_prompt(self):
+            return ChatPromptTemplate.from_template("History:\n{feedback_history}")
+
+    agent = HistoryAgent()
+    state = {
+        "task": "t",
+        "feedback_history": [
+            {"stage": "value_assessment", "response": "prior answer", "feedback": "be specific"}
+        ],
+    }
+
+    mock_response = AsyncMock()
+    mock_response.content = "ok"
+    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
+        await agent.process(state)
+
+    prompt_text = "\n".join(m["content"] for m in agent.last_raw_response["prompt"])
+    assert "Stage: value_assessment" in prompt_text
+    assert "Feedback: be specific" in prompt_text
+    assert "{'response'" not in prompt_text  # no Python repr leaked into the prompt
+
+
+@pytest.mark.asyncio
+async def test_empty_feedback_history_renders_placeholder(mock_env_vars):
+    class HistoryAgent(TestAgent):
+        def _create_prompt(self):
+            return ChatPromptTemplate.from_template("History:\n{feedback_history}")
+
+    agent = HistoryAgent()
+    mock_response = AsyncMock()
+    mock_response.content = "ok"
+    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
+        await agent.process({"task": "t", "feedback_history": []})
+
+    prompt_text = "\n".join(m["content"] for m in agent.last_raw_response["prompt"])
+    assert "No previous feedback" in prompt_text
+
+
 def test_outer_node_timeout_exceeds_inner_llm_timeout():
     """C4 guard: the outer per-node timeout must stay strictly greater than the
     inner LLM timeout so they never race."""

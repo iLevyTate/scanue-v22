@@ -20,6 +20,29 @@ logger = logging.getLogger(__name__)
 AGENT_LLM_TIMEOUT_SECONDS = 30.0
 
 
+def format_feedback_history(history: Any) -> str:
+    """Render HITL feedback history as readable text for prompt injection.
+
+    Passing the raw list straight into the template rendered a Python repr
+    (``[{'response': ..., 'feedback': ...}]``) into the prompt. Shared by every
+    agent so DLPFC and the specialists format history identically.
+    """
+    if not history:
+        return "No previous feedback"
+
+    formatted = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            formatted.append(str(entry))
+            continue
+        formatted.append(
+            f"Stage: {entry.get('stage', 'unknown')}\n"
+            f"Response: {entry.get('response', '')}\n"
+            f"Feedback: {entry.get('feedback', '')}\n"
+        )
+    return "\n".join(formatted)
+
+
 def summarize_state(state: Dict[str, Any]) -> str:
     """Build a compact textual summary of the state for prompt injection.
 
@@ -159,7 +182,7 @@ class BaseAgent(ABC):
                 state=summarize_state(state),
                 previous_response=state.get("previous_response", "No previous response"),
                 feedback=state.get("feedback", "No feedback provided"),
-                feedback_history=state.get("feedback_history", [])
+                feedback_history=format_feedback_history(state.get("feedback_history", []))
             )
 
             # Invoke the LLM

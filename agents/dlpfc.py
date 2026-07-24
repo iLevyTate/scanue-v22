@@ -1,8 +1,14 @@
 from typing import Dict, Any, List
+import asyncio
 import copy
 import logging
 from langchain_core.prompts import ChatPromptTemplate
-from .base import BaseAgent, summarize_state
+from .base import (
+    AGENT_LLM_TIMEOUT_SECONDS,
+    BaseAgent,
+    format_feedback_history,
+    summarize_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +68,22 @@ class DLPFCAgent(BaseAgent):
             # up to a real handler.
             logger.debug("DLPFC Agent processing:\n%s", summarize_state(state))
 
-            # Get task breakdown from LLM
-            response = await self.llm.ainvoke(
-                self.prompt.format_messages(
-                    task=state.get("task", ""),
-                    state=summarize_state(state),
-                    previous_response=state.get("previous_response", "No previous response"),
-                    feedback=state.get("feedback", "No feedback provided"),
-                    feedback_history=self._format_feedback_history(state.get("feedback_history", []))
-                )
+            # Get task breakdown from LLM. The inner timeout mirrors
+            # BaseAgent._process_with_timeout -- DLPFC overrides process() and so
+            # used to bypass AGENT_LLM_TIMEOUT_SECONDS entirely, leaving the
+            # "inner timeout fires before the outer node timeout" invariant
+            # (asserted by two tests) vacuous for the one agent that always runs.
+            response = await asyncio.wait_for(
+                self.llm.ainvoke(
+                    self.prompt.format_messages(
+                        task=state.get("task", ""),
+                        state=summarize_state(state),
+                        previous_response=state.get("previous_response", "No previous response"),
+                        feedback=state.get("feedback", "No feedback provided"),
+                        feedback_history=self._format_feedback_history(state.get("feedback_history", []))
+                    )
+                ),
+                timeout=AGENT_LLM_TIMEOUT_SECONDS,
             )
 
             logger.debug("DLPFC Agent received response: %s", response)
@@ -97,6 +110,14 @@ class DLPFCAgent(BaseAgent):
             logger.debug("Updated state: %s", updated_state)
             return updated_state
 
+        except asyncio.TimeoutError:
+            # Same wording BaseAgent uses, so callers see one timeout message.
+            error_msg = "Request timed out. Please try again."
+            logger.warning("DLPFC LLM call timed out after %ss", AGENT_LLM_TIMEOUT_SECONDS)
+            return {
+                "response": {"role": "assistant", "content": error_msg},
+                "error": True,
+            }
         except Exception as e:
             # asyncio.CancelledError is a BaseException and intentionally
             # propagates so cooperative cancellation still works.
@@ -281,15 +302,6 @@ class DLPFCAgent(BaseAgent):
         Returns:
             str: Formatted feedback history string for prompt integration
         """
-        if not history:
-            return "No previous feedback"
-
-        formatted = []
-        for entry in history:
-            # STRUCTURED FEEDBACK: Format each entry with context for agent understanding
-            formatted.append(
-                f"Stage: {entry.get('stage', 'unknown')}\n"
-                f"Response: {entry.get('response', '')}\n"
-                f"Feedback: {entry.get('feedback', '')}\n"
-            )
-        return "\n".join(formatted)
+        # Thin wrapper over the shared helper so DLPFC and the specialists render
+        # history identically. Kept as a method because tests and callers use it.
+        return format_feedback_history(history)

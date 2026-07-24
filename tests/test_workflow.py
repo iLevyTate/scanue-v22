@@ -343,6 +343,39 @@ async def test_c1_regression_structured_delegation_reaches_the_router(mock_state
 
 
 @pytest.mark.asyncio
+async def test_delegation_delta_propagates_subtasks(mock_env_vars, mock_state):
+    """C6: DLPFC parses subtasks, but the delta used to drop the key, so
+    state["subtasks"] stayed [] for the whole run and the parsing was dead."""
+    parsed = [{"task": "Map stakeholders", "agent": "VMPFC Agent", "category": "general"}]
+    dlpfc_result = {**_ok_response(FULL_DELEGATION), "subtasks": parsed}
+
+    with patch("agents.dlpfc.DLPFCAgent.process", new=AsyncMock(return_value=dlpfc_result)):
+        result = await process_task_delegation(mock_state)
+
+    assert result["subtasks"] == parsed
+
+
+@pytest.mark.asyncio
+async def test_hitl_feedback_entry_has_both_stage_and_timestamp():
+    """C7: the CLI and the workflow used to emit different record shapes -- one
+    with `stage` and no `timestamp`, the other the reverse. DLPFC's history
+    formatter reads `stage`, so entries from this path rendered 'Stage: unknown'."""
+    state = {
+        "stage": "value_assessment",
+        "response": {"role": "assistant", "content": "final answer"},
+        "feedback_history": [],
+    }
+
+    updated = process_hitl_feedback(state, "needs more detail")
+    entry = updated["feedback_history"][0]
+
+    assert entry["stage"] == "value_assessment"
+    assert entry["timestamp"]
+    assert entry["feedback"] == "needs more detail"
+    assert entry["response"] == "final answer"
+
+
+@pytest.mark.asyncio
 async def test_process_task_delegation_error(mock_env_vars, mock_state):
     with patch("agents.dlpfc.DLPFCAgent.process", side_effect=ValueError("test error")):
         result = await process_task_delegation(mock_state)

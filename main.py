@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, Any
 from dotenv import load_dotenv
 from langgraph.errors import GraphRecursionError
-from workflow import create_workflow
+from workflow import create_workflow, process_hitl_feedback
 from utils.config import ConfigLoader
 
 # Ensure Unicode output works on Windows consoles where stdout may default to cp1252.
@@ -288,19 +288,18 @@ async def main(args=None):
                         if feedback:
                             print("\n🔄 Processing your feedback...")
                             # PERSISTENT LEARNING: Add feedback to cross-session history
-                            # This enables the system to learn from previous interactions
-                            new_feedback = {
-                                "response": response_content,  # Store response for context
-                                "feedback": feedback,          # User's qualitative assessment
-                                "stage": result.get("stage", "unknown")  # Processing stage context
-                            }
-                            feedback_history.append(new_feedback)
+                            # via the single shared implementation, so entries from
+                            # the CLI and the workflow always have the same shape.
+                            feedback_state = process_hitl_feedback(
+                                {**result, "feedback_history": feedback_history, "session_log": session_log},
+                                feedback,
+                            )
+                            feedback_history = feedback_state["feedback_history"]
+                            session_log = feedback_state["session_log"]
+
                             # PERSISTENCE: Save updated feedback history to file for future sessions
                             save_feedback_history(feedback_history)
-                            
-                            # SESSION TRACKING: Add feedback to current session log
-                            session_log["user_feedback"] = feedback
-                            
+
                             print("\n✅ Feedback stored for future queries.")
                 
                 # Save the complete session log

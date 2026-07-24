@@ -109,6 +109,25 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
             await dlpfc_agent.process(test_state)
 
 @pytest.mark.asyncio
+async def test_dlpfc_applies_inner_llm_timeout(dlpfc_agent, test_state):
+    """C8: DLPFC overrides process() and used to call self.llm.ainvoke directly,
+    bypassing AGENT_LLM_TIMEOUT_SECONDS. That made the 'inner timeout fires
+    before the outer node timeout' invariant vacuous for the one agent that runs
+    on every single task."""
+    async def slow_ainvoke(*args, **kwargs):
+        await asyncio.sleep(5)
+
+    dlpfc_agent.llm = AsyncMock()
+    dlpfc_agent.llm.ainvoke = slow_ainvoke
+
+    with patch("agents.dlpfc.AGENT_LLM_TIMEOUT_SECONDS", 0.01):
+        result = await dlpfc_agent.process(test_state)
+
+    assert result["error"] is True
+    assert "timed out" in result["response"]["content"].lower()
+
+
+@pytest.mark.asyncio
 async def test_dlpfc_agent_cancellation_propagates(dlpfc_agent, test_state):
     """CancelledError must propagate out of DLPFC.process (no longer swallowed)."""
     dlpfc_agent.llm = AsyncMock()
