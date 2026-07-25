@@ -84,6 +84,62 @@ def test_feedback_history_write_is_not_partial(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_closed_stdin_exits_cleanly(mock_env_vars, mock_workflow, capsys):
+    """`python main.py </dev/null` died with a raw EOFError traceback.
+
+    KeyboardInterrupt was handled two lines away; EOF was not. Affects cron jobs,
+    `docker run` without -i, and piped input that runs out.
+    """
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("builtins.input", side_effect=EOFError):
+        await main()  # must not raise
+
+    assert "Goodbye" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_is_reported_and_recorded(mock_env_vars, capsys):
+    """A run where specialists failed but MPFC succeeded was presented as a clean
+    success, with no indication the answer was built from a partial analysis."""
+    mock_workflow = AsyncMock()
+    mock_workflow.ainvoke = AsyncMock(return_value={
+        "response": {"role": "assistant", "content": "Final answer."},
+        "error": False,
+        "agent_errors": {"VMPFC": "connection refused", "ACC": "connection refused"},
+    })
+    saved = {}
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["a task"])
+
+    out = capsys.readouterr().out
+    assert "Partial result" in out
+    assert "VMPFC" in out and "ACC" in out
+
+    assert saved["degraded"] is True
+    assert set(saved["agent_errors"]) == {"VMPFC", "ACC"}
+
+
+@pytest.mark.asyncio
+async def test_clean_run_is_not_marked_degraded(mock_env_vars, mock_workflow, capsys):
+    saved = {}
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["a task"])
+
+    assert saved["degraded"] is False
+    assert "Partial result" not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
 async def test_app_initialization(mock_env_vars, mock_workflow):
     """The initial workflow state carries the new keys and ainvoke gets the
     recursion_limit config."""

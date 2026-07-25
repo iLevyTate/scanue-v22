@@ -179,10 +179,16 @@ async def test_workflow_state_transitions(mock_env_vars):
     assert not final_state.get("error")
     assert "MPFC" in final_state.get("agent_responses", {})
     # All four specialist stages plus task_delegation recorded exactly once.
-    assert set(final_state["completed_stages"]) == {
+    expected = {
         "task_delegation", "emotional_regulation", "reward_processing",
         "conflict_detection", "value_assessment",
     }
+    assert set(final_state["completed_stages"]) == expected
+    # Length too, not just set membership: a set comparison is duplicate-blind,
+    # so a stage running twice would pass silently. This matters most if the
+    # specialists are ever made concurrent, where the natural implementation
+    # re-dispatches each sibling.
+    assert len(final_state["completed_stages"]) == len(expected)
 
 
 @pytest.mark.asyncio

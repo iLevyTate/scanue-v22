@@ -117,36 +117,46 @@ def log_stage_end(stage_log: Dict, result: Dict[str, Any], error: str = None) ->
             # Ignore if we can't calculate duration
             pass
 
-    # Record output or error
+    # Record output AND error. These were mutually exclusive, so a failed stage
+    # lost its output and its raw_llm_response -- which is where the model name
+    # lives, making it impossible to tell from the log which model had failed.
     if error:
         stage_log["error"] = error
-    else:
-        # Record the full structured response
-        stage_log["output"] = copy.deepcopy(result.get("response", {}))
 
-        # If result includes raw LLM response, include it
-        if "raw_llm_response" in result:
-            stage_log["raw_llm_response"] = copy.deepcopy(result.get("raw_llm_response", {}))
+    stage_log["output"] = copy.deepcopy(result.get("response", {}))
+
+    # If result includes raw LLM response, include it
+    if "raw_llm_response" in result:
+        stage_log["raw_llm_response"] = copy.deepcopy(result.get("raw_llm_response", {}))
 
     return stage_log
 
 
-def _session_log_delta(state: Dict[str, Any], stage_log: Dict) -> Dict[str, Any]:
+def _session_log_delta(
+    state: Dict[str, Any],
+    stage_log: Dict,
+    agent_errors: Dict[str, str] = None,
+) -> Dict[str, Any]:
     """Build a delta that appends stage_log to session_log["stages"].
 
     Returns a fresh session_log dict (never mutates the incoming one) so nodes
     return deltas instead of editing shared state in place. Empty dict if there
     is no session log to update.
+
+    `agent_errors` is mirrored into the log because it is otherwise a
+    state-only channel: a run could finish with several failed specialists and
+    leave no trace of them anywhere in logs/.
     """
     session_log = state.get("session_log")
     if not session_log or not stage_log:
         return {}
-    return {
-        "session_log": {
-            **session_log,
-            "stages": list(session_log.get("stages", [])) + [stage_log],
-        }
+    updated = {
+        **session_log,
+        "stages": list(session_log.get("stages", [])) + [stage_log],
     }
+    if agent_errors:
+        updated["agent_errors"] = dict(agent_errors)
+    return {"session_log": updated}
 
 
 # Semantic keywords used only when DLPFC does not emit the structured YES/NO block.
@@ -350,7 +360,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
                 "agent_responses": {},
                 "completed_stages": completed_stages + ["task_delegation"],
             }
-            delta.update(_session_log_delta(state, stage_log))
+            delta.update(_session_log_delta(state, stage_log, agent_errors))
             return delta
 
         print("✅ Task delegation complete")
@@ -406,7 +416,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
             "delegation_source": delegation_source,
             "completed_stages": completed_stages + ["task_delegation"],
         }
-        delta.update(_session_log_delta(state, stage_log))
+        delta.update(_session_log_delta(state, stage_log, agent_errors))
         return delta
 
     except Exception as e:
@@ -431,16 +441,32 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
             "agent_responses": {},
             "completed_stages": completed_stages + ["task_delegation"],
         }
-        delta.update(_session_log_delta(state, stage_log))
+        delta.update(_session_log_delta(state, stage_log, agent_errors))
         return delta
 
 
 def _prepare_value_assessment_state(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Enrich MPFC's input with a summary of the other agents' insights."""
+    """Enrich MPFC's input with a summary of the other agents' insights.
+
+    Agents that FAILED are excluded. Their "response" is an error string such as
+    "Error processing request: All connection attempts failed", and feeding that
+    to the integration stage as an insight made MPFC synthesize over error text
+    and present the result to the user as the answer. MPFC is told which peers
+    are missing instead, so it can qualify its conclusion.
+    """
     enhanced_state = copy.deepcopy(state)
-    if state.get("agent_responses"):
-        agent_summary = "\n\nPrevious Agent Insights:\n"
-        for agent_name, response in state["agent_responses"].items():
+    responses = state.get("agent_responses") or {}
+    failed = set(state.get("agent_errors") or {})
+
+    # Exclude failures, and MPFC itself -- it is the consumer here, not a peer.
+    usable = {
+        name: r for name, r in responses.items()
+        if name not in failed and name != "MPFC"
+    }
+
+    if usable:
+        agent_summary = ""
+        for agent_name, response in usable.items():
             content = response.get("content", "") if isinstance(response, dict) else str(response)
             if len(content) > PEER_INSIGHT_CHAR_BUDGET:
                 # Only claim truncation when it actually happened; the ellipsis
@@ -448,6 +474,13 @@ def _prepare_value_assessment_state(state: Dict[str, Any]) -> Dict[str, Any]:
                 content = content[:PEER_INSIGHT_CHAR_BUDGET].rstrip() + " [...truncated]"
             agent_summary += f"\n{agent_name} Agent: {content}\n"
         enhanced_state["previous_agent_insights"] = agent_summary
+
+    # Name the peers that failed so MPFC can say the analysis is partial rather
+    # than silently integrating over a gap it cannot see.
+    missing = sorted(name for name in failed if name != "MPFC")
+    if missing:
+        enhanced_state["unavailable_agents"] = missing
+
     return enhanced_state
 
 
@@ -479,17 +512,24 @@ async def _run_specialist_stage(state: Dict[str, Any], stage_name: str, *, prepa
         result = await asyncio.wait_for(agent.process(process_input), timeout=NODE_TIMEOUT_SECONDS)
 
         # Per-agent failures are recorded but do not stop the workflow.
+        agent_reported_error = None
         if result.get("error"):
-            error_msg = result.get("response", {}).get("content", "Unknown error")
-            agent_errors[agent_name] = error_msg
+            agent_reported_error = result.get("response", {}).get("content", "Unknown error")
+            agent_errors[agent_name] = agent_reported_error
 
         response = result.get("response", {})
         agent_responses[agent_name] = response
 
-        print(f"✅ {stage_name.replace('_', ' ').title()} complete")
+        if agent_reported_error:
+            print(f"❌ {stage_name.replace('_', ' ').title()} failed: {agent_reported_error}")
+        else:
+            print(f"✅ {stage_name.replace('_', ' ').title()} complete")
 
         if stage_log:
-            stage_log = log_stage_end(stage_log, result)
+            # Pass the error through. log_stage_end was previously called without
+            # it even when the agent reported a failure, so stage_log["error"]
+            # stayed None and failed stages were unfindable in the session log.
+            stage_log = log_stage_end(stage_log, result, agent_reported_error)
 
         delta = {
             "response": response,
@@ -497,7 +537,7 @@ async def _run_specialist_stage(state: Dict[str, Any], stage_name: str, *, prepa
             "agent_errors": agent_errors,
             "completed_stages": completed_stages + [stage_name],
         }
-        delta.update(_session_log_delta(state, stage_log))
+        delta.update(_session_log_delta(state, stage_log, agent_errors))
 
         # Only a failure of the final synthesis stage marks the whole run errored.
         if stage_name == "value_assessment" and result.get("error"):
@@ -521,7 +561,7 @@ async def _run_specialist_stage(state: Dict[str, Any], stage_name: str, *, prepa
             "agent_errors": agent_errors,
             "completed_stages": completed_stages + [stage_name],
         }
-        delta.update(_session_log_delta(state, stage_log))
+        delta.update(_session_log_delta(state, stage_log, agent_errors))
 
         if stage_name == "value_assessment":
             delta["error"] = True

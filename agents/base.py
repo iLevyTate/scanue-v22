@@ -43,6 +43,21 @@ def format_feedback_history(history: Any) -> str:
     return "\n".join(formatted)
 
 
+def state_text(state: Dict[str, Any], key: str, placeholder: str) -> str:
+    """Read a text field, falling back to `placeholder` when it is blank.
+
+    `state.get(key, placeholder)` was not enough: main.py seeds `feedback` and
+    `previous_response` as empty strings, so the key is always PRESENT and the
+    default could never fire. Prompts rendered a bare "Feedback:" line instead
+    of the intended sentinel.
+    """
+    value = state.get(key)
+    if value is None:
+        return placeholder
+    text = str(value).strip()
+    return text or placeholder
+
+
 def summarize_state(state: Dict[str, Any]) -> str:
     """Build a compact textual summary of the state for prompt injection.
 
@@ -50,13 +65,23 @@ def summarize_state(state: Dict[str, Any]) -> str:
     prompt-injection surface (feedback history, session logs, etc. all get
     serialized). We pass only the fields an agent actually needs to reason.
     """
-    parts = [
-        f"task: {state.get('task', '')}",
-        f"stage: {state.get('stage', '')}",
-    ]
+    # `task` is deliberately omitted: every prompt template already has its own
+    # `{task}` slot, so including it here rendered the task twice.
+    parts = [f"stage: {state.get('stage', '')}"]
+
     insights = state.get("previous_agent_insights")
     if insights:
-        parts.append(f"previous_agent_insights: {insights}")
+        # The summary is emitted with its own heading rather than a snake_cased
+        # key, which previously produced the doubled label
+        # "previous_agent_insights: \n\nPrevious Agent Insights:".
+        parts.append(f"\nAnalysis from other agents:\n{insights.strip()}")
+
+    unavailable = state.get("unavailable_agents")
+    if unavailable:
+        parts.append(
+            "\nUnavailable agents (they failed; their analysis is missing): "
+            + ", ".join(unavailable)
+        )
     return "\n".join(parts)
 
 
@@ -180,8 +205,8 @@ class BaseAgent(ABC):
             formatted_messages = self.prompt.format_messages(
                 task=state.get("task", ""),
                 state=summarize_state(state),
-                previous_response=state.get("previous_response", "No previous response"),
-                feedback=state.get("feedback", "No feedback provided"),
+                previous_response=state_text(state, "previous_response", "No previous response"),
+                feedback=state_text(state, "feedback", "No feedback provided"),
                 feedback_history=format_feedback_history(state.get("feedback_history", []))
             )
 

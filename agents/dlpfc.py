@@ -9,6 +9,7 @@ from .base import (
     AGENT_LLM_TIMEOUT_SECONDS,
     BaseAgent,
     format_feedback_history,
+    state_text,
     summarize_state,
 )
 
@@ -140,8 +141,8 @@ class DLPFCAgent(BaseAgent):
         return self._create_delegation_prompt().format_messages(
             task=state.get("task", ""),
             state=summarize_state(state),
-            previous_response=state.get("previous_response", "No previous response"),
-            feedback=state.get("feedback", "No feedback provided"),
+            previous_response=state_text(state, "previous_response", "No previous response"),
+            feedback=state_text(state, "feedback", "No feedback provided"),
             feedback_history=self._format_feedback_history(state.get("feedback_history", [])),
         )
 
@@ -249,8 +250,8 @@ class DLPFCAgent(BaseAgent):
                     self.prompt.format_messages(
                         task=state.get("task", ""),
                         state=summarize_state(state),
-                        previous_response=state.get("previous_response", "No previous response"),
-                        feedback=state.get("feedback", "No feedback provided"),
+                        previous_response=state_text(state, "previous_response", "No previous response"),
+                        feedback=state_text(state, "feedback", "No feedback provided"),
                         feedback_history=self._format_feedback_history(state.get("feedback_history", []))
                     )
                 ),

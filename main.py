@@ -261,6 +261,13 @@ async def main(args=None):
                 session_log = result.get("session_log", session_log)
                 session_log["completed"] = not result.get("error")
 
+                # A run can finish with the final synthesis intact while one or
+                # more specialists failed. That is not a clean success, and it
+                # used to be recorded and presented as one.
+                agent_errors = result.get("agent_errors") or {}
+                session_log["agent_errors"] = agent_errors
+                session_log["degraded"] = bool(agent_errors)
+
                 if result.get("error"):
                     error_content = _response_content(result.get("response"))
                     session_log["error"] = error_content
@@ -284,6 +291,18 @@ async def main(args=None):
                     
                 # Always present the response and offer feedback option
                 print(f"\n✅ Result: {response_content}")
+
+                # Say so when the answer was produced without some specialists.
+                # Silently returning a partial analysis as if it were complete is
+                # the most misleading thing this CLI can do.
+                if agent_errors:
+                    failed = ", ".join(sorted(agent_errors))
+                    print(
+                        f"\n⚠️  Partial result: {len(agent_errors)} agent(s) failed "
+                        f"({failed}) and were excluded from the final integration."
+                    )
+                    for name, message in sorted(agent_errors.items()):
+                        print(f"     • {name}: {message}")
                     
                 # HUMAN-IN-THE-LOOP: Offer feedback collection only in interactive mode.
                 # Non-interactive runs (args provided) should never block on stdin.
@@ -371,6 +390,11 @@ async def main(args=None):
             if not interactive:
                 break
                 
+    except EOFError:
+        # stdin closed with no input: piped input that ran out, a cron job, or
+        # `docker run` without -i. KeyboardInterrupt was already handled here;
+        # EOF was not, so those runs died with a raw traceback.
+        print("\n\n👋 Input stream closed. Goodbye!")
     except KeyboardInterrupt:
         print("\n\n👋 SCANUE-V processing interrupted. Goodbye!")
     except Exception as e:
