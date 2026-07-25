@@ -25,8 +25,11 @@ dependencies = [
 dev = [
     "pytest>=8.0,<10.0",
     "pytest-asyncio>=0.23,<2.0",
-    "ruff>=0.6",
-    "mypy>=1.11",
+    # Upper bounds matter more for linters than for libraries: they gate CI, and
+    # a new release that adds default rules turns a green build red with no code
+    # change. Validated against ruff 0.16 and mypy 2.3; raise deliberately.
+    "ruff>=0.6,<0.17",
+    "mypy>=1.11,<3.0",
     "types-PyYAML",
 ]
 
