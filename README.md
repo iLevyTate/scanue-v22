@@ -39,8 +39,10 @@ For clarity:
 
 2. **Install dependencies:**
    ```bash
-   pip install -r requirements.txt
+   pip install -e .          # or: pip install -e ".[dev]" to also get pytest/ruff/mypy
    ```
+   `pip install -r requirements.txt` still works, but installs the dependencies
+   without the package itself (so the `scanue` command is not created).
 
 3. **(Optional) Set up environment variables** in a `.env` file (recommended)
 

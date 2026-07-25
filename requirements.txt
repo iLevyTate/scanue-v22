@@ -1,3 +1,9 @@
+# Runtime dependencies, kept in sync with [project.dependencies] in
+# pyproject.toml -- which is the source of truth. This file remains so that
+# `pip install -r requirements.txt` keeps working for existing setups.
+#
+# Prefer:  pip install -e .          (runtime)
+#          pip install -e ".[dev]"   (adds pytest, ruff, mypy)
 langchain-core>=1.0,<2.0
 langgraph>=1.0,<2.0
 langchain-openai>=1.0,<2.0
