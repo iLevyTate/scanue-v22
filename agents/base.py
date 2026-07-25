@@ -280,9 +280,14 @@ class BaseAgent(ABC):
         """
         pass
 
-    @abstractmethod
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Process the current workflow state through this agent's cognitive lens.
+
+        This is a complete default implementation. It was previously decorated
+        @abstractmethod *while carrying this same body*, which forced every
+        specialist to define a `process` that did nothing but
+        `return await super().process(state)`. Subclasses override it only when
+        they genuinely need different behaviour (DLPFC does).
 
         This method performs the core agent processing by integrating the current
         task context, feedback history, and previous agent responses into a
