@@ -26,7 +26,7 @@ jobs:
         run: ruff check .
 
       - name: Type check
-        run: mypy main.py workflow.py agents utils
+        run: mypy main.py workflow.py agents utils scripts
 
   pytest:
     runs-on: ubuntu-latest

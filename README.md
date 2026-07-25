@@ -77,12 +77,23 @@ See `docs/local_models.md` for examples and recommendations.
 ## **Testing**
 ```bash
 pip install -e ".[dev]"
-pytest tests/       # 195 tests, fully offline — no provider, no API key
+pytest tests/       # 217 tests, fully offline — no provider, no API key
 ruff check .
-mypy main.py workflow.py agents utils
+mypy main.py workflow.py agents utils scripts
 ```
 
 CI runs all three on every push and pull request, across Python 3.11–3.13.
+
+The suite proves the logic but never contacts a model. To validate against your
+actual provider — schema compliance, token capture, context headroom — run:
+
+```bash
+python scripts/validate.py
+```
+
+It runs one real task in a temporary state directory (your `feedback_history.json`
+and `logs/` are untouched) and prints a pass/fail report. Exit code 0 means every
+hard check passed.
 
 ## **Partial results**
 Specialists fail independently: if VMPFC cannot reach its model, the run
@@ -149,6 +160,7 @@ Key modules:
 - `config/agents.yaml`: per-agent model/provider configuration
 - `docs/local_models.md`: guide for Ollama / HuggingFace / OpenAI configuration
 - `tests/`: pytest suite covering agents, workflow, HITL, and CLI
+- `scripts/validate.py`: one-command validation against a real provider
 - `feedback_history.json`: persistent Human-in-the-Loop (HITL) feedback (gitignored)
 - `logs/`: per-run session logs (gitignored)
 
