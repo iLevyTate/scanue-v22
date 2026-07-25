@@ -83,6 +83,35 @@ pytest tests/
 The suite runs offline — no provider is contacted and no API key is required.
 CI runs it on every push and pull request across Python 3.11–3.13.
 
+## **Delegation**
+DLPFC decides which specialists a task needs. It first asks the model for a
+**schema-validated** decision (`with_structured_output`), which the provider
+constrains during generation — nothing has to be parsed out of prose. If the
+model or provider can't do that, it falls back to parsing the text reply.
+
+Every run records how the decision was made, in `logs/session_*.json` under the
+`task_delegation` stage:
+
+| `delegation_source` | Meaning |
+|---|---|
+| `structured_output` | Schema-validated — the model stated its decision |
+| `structured_text` | Parsed from `- VMPFC Agent: YES` lines |
+| `semantic` | Inferred from keywords in the reply |
+| `pattern` | Inferred from loose regex matches |
+| `heuristic` | Nothing matched; task-complexity guess |
+| `resilient_fallback` | DLPFC failed; safe default set was used |
+
+Only `structured_output` reflects an explicit choice by the model — everything
+else is inference, and a fallback also emits a `WARNING`. To check how your
+models are behaving:
+
+```bash
+grep -h '"delegation_source"' logs/session_*.json | sort | uniq -c | sort -rn
+```
+
+A high fallback rate usually means the model is too small to follow the schema;
+DLPFC drives all routing, so it benefits most from your strongest model.
+
 ## **Troubleshooting**
 Diagnostics are logged to stderr. The default level is `WARNING`; raise it to see
 prompt construction, routing decisions, and provider traffic:

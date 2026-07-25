@@ -47,6 +47,11 @@ class AgentState(TypedDict, total=False):
     session_log: dict
     error: bool
     delegated_agents: list   # Which specialist stages DLPFC selected, in order
+    # How that selection was made: "structured_output" (schema-validated, the
+    # only path where the model actually stated its decision), or one of the
+    # text-parsing fallbacks -- "structured_text" / "semantic" / "pattern" /
+    # "heuristic", in descending order of confidence.
+    delegation_source: str
     agent_responses: dict    # Collected responses keyed by agent name
     agent_errors: dict       # Per-agent failures (workflow continues past these)
     # Stages that have finished executing (success OR failure). This is a plain
@@ -172,17 +177,33 @@ def _keyword_present(keyword: str, text_lower: str) -> bool:
 def parse_agent_assignments(dlpfc_response: str) -> list:
     """Parse the DLPFC agent's response to extract which agents should be called.
 
+    Thin wrapper over :func:`parse_agent_assignments_with_source` for callers
+    that only need the stage list.
+    """
+    return parse_agent_assignments_with_source(dlpfc_response)[0]
+
+
+def parse_agent_assignments_with_source(dlpfc_response: str) -> tuple:
+    """Parse the DLPFC response and report which strategy decided the routing.
+
     This function intelligently analyzes the DLPFC's task delegation output using
     multiple parsing strategies to determine which specialized agents are needed.
     It prioritizes structured format parsing and falls back to semantic analysis.
+
+    The source is recorded in the session log so the fallback rate is measurable
+    from real runs. Only ``structured_text`` reflects an explicit decision by the
+    model; the others are progressively weaker guesses, and a run that is mostly
+    ``semantic``/``heuristic`` means the routing is being driven by keyword
+    matching rather than by DLPFC.
 
     Args:
         dlpfc_response: The raw text response from the DLPFC agent
 
     Returns:
-        list: Agent stage names in execution order (e.g., ['emotional_regulation', 'conflict_detection'])
+        tuple: (stage names in execution order, source label)
     """
     agent_assignments = []
+    source = "heuristic"
 
     # Agent name mappings
     agent_map = {
@@ -211,6 +232,7 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
                 if stage_name not in agent_assignments:
                     agent_assignments.append(stage_name)
                     structured_found = True
+                    source = "structured_text"
                     logger.debug("Structured format: %s -> %s", agent_name, stage_name)
                 break
 
@@ -228,6 +250,7 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
                     stage_name = agent_map[agent_name]
                     if stage_name not in agent_assignments:
                         agent_assignments.append(stage_name)
+                        source = "semantic"
                         logger.debug("Semantic match: '%s' -> %s -> %s", keyword, agent_name, stage_name)
                     break
 
@@ -247,6 +270,7 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
                 if re.search(pattern, response_lower):
                     if stage_name not in agent_assignments:
                         agent_assignments.append(stage_name)
+                        source = "pattern"
                         logger.debug("Pattern match: '%s' -> %s -> %s", pattern, agent_name, stage_name)
                     break
 
@@ -285,8 +309,8 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
         agent_assignments.append('value_assessment')
         logger.debug("Added MPFC for final integration")
 
-    logger.debug("Final agent delegation: %s", agent_assignments)
-    return agent_assignments
+    logger.debug("Final agent delegation: %s (source=%s)", agent_assignments, source)
+    return agent_assignments, source
 
 
 async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -322,6 +346,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
                 "response": result.get("response", {}),
                 "agent_errors": agent_errors,
                 "delegated_agents": resilient_delegation,
+                "delegation_source": "resilient_fallback",
                 "agent_responses": {},
                 "completed_stages": completed_stages + ["task_delegation"],
             }
@@ -340,14 +365,34 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
         # digest therefore threw away the decision and silently collapsed almost
         # every run to MPFC-only. The raw text is cached by the agent for exactly
         # this reason; the formatted content is only a last-resort fallback.
-        raw_reply = (result.get("raw_llm_response") or {}).get("response")
-        response_content = result.get("response", {}).get("content", "")
-        delegated_agents = parse_agent_assignments(raw_reply or response_content)
+        # Preferred path: the agent got a schema-validated decision back from the
+        # provider, so there is nothing to parse.
+        delegated_agents = result.get("delegated_agents")
+        delegation_source = result.get("delegation_source")
+
+        if not delegated_agents:
+            raw_reply = (result.get("raw_llm_response") or {}).get("response")
+            response_content = result.get("response", {}).get("content", "")
+            delegated_agents, delegation_source = parse_agent_assignments_with_source(
+                raw_reply or response_content
+            )
 
         print(f"📋 Delegating to agents: {', '.join(delegated_agents)}")
 
+        if delegation_source != "structured_output":
+            # Everything except structured output is a guess of some kind. Warn so
+            # a persistently non-compliant model is visible without digging
+            # through logs/.
+            logger.warning(
+                "DLPFC delegation fell back to text parsing (source=%s); "
+                "routing was inferred, not stated by the model",
+                delegation_source,
+            )
+
         if stage_log:
             stage_log = log_stage_end(stage_log, result)
+            stage_log["delegation_source"] = delegation_source
+            stage_log["delegated_agents"] = list(delegated_agents)
 
         delta = {
             "response": result.get("response", {}),
@@ -358,6 +403,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
             # the reply, but the delta used to omit it -- so the parsed subtasks
             # were computed and then discarded on every run.
             "subtasks": result.get("subtasks", []),
+            "delegation_source": delegation_source,
             "completed_stages": completed_stages + ["task_delegation"],
         }
         delta.update(_session_log_delta(state, stage_log))
@@ -381,6 +427,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
             "response": error_response,
             "agent_errors": agent_errors,
             "delegated_agents": resilient_delegation,
+            "delegation_source": "resilient_fallback",
             "agent_responses": {},
             "completed_stages": completed_stages + ["task_delegation"],
         }

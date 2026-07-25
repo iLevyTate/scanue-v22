@@ -80,9 +80,12 @@ def save_feedback_history(feedback_history):
         feedback_history: List of feedback entries to persist
     """
     try:
-        with open(FEEDBACK_HISTORY_FILE, 'w') as f:
-            json.dump(feedback_history, f)
+        # Serialize first so a failure cannot truncate an existing history file.
+        payload = json.dumps(feedback_history, default=str)
+        with open(FEEDBACK_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            f.write(payload)
     except Exception as e:
+        logger.warning("Could not save feedback history: %s", e)
         print(f"Warning: Could not save feedback history: {str(e)}")
 
 def _response_content(response: Any) -> Any:
@@ -133,11 +136,17 @@ def save_session_log(session_log: Dict[str, Any]) -> str:
         
         # Create filename with timestamp and session ID
         filename = f"{LOGS_DIRECTORY}/session_{timestamp_str}_{session_id}.json"
-        
-        # Save log file
-        with open(filename, 'w') as f:
-            json.dump(session_log, f, indent=2)
-        
+
+        # Serialize BEFORE opening the file. json.dump() writes incrementally, so
+        # anything it cannot encode (a provider object that leaked into
+        # raw_llm_response, say) raised partway through and left a truncated,
+        # unparseable file behind while this function reported failure.
+        # `default=str` keeps an unexpected value from destroying the whole log.
+        payload = json.dumps(session_log, indent=2, default=str)
+
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(payload)
+
         return filename
     except Exception as e:
         print(f"Warning: Could not save session log: {str(e)}")

@@ -1,6 +1,11 @@
+import json
+import pathlib
+
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from langgraph.errors import GraphRecursionError
+
+import main as main_mod
 from main import main
 
 
@@ -47,6 +52,35 @@ def _mock_session():
 @pytest.fixture
 def mock_session():
     return _mock_session()
+
+
+def test_session_log_survives_unserializable_values(tmp_path, monkeypatch):
+    """A value json can't encode used to truncate the log file mid-write.
+
+    json.dump() streams to the file handle, so it raised partway through and
+    left an unparseable file behind while save_session_log swallowed the error
+    and reported failure -- losing the whole run's diagnostics.
+    """
+    monkeypatch.setattr(main_mod, "LOGS_DIRECTORY", str(tmp_path / "logs"))
+
+    log = _mock_session()
+    log["stages"] = [{"stage": "task_delegation", "raw_llm_response": object()}]
+
+    filename = main_mod.save_session_log(log)
+
+    assert filename is not None
+    written = json.loads(pathlib.Path(filename).read_text())  # valid JSON
+    assert written["session_id"] == "test-session-id"
+    assert written["stages"][0]["stage"] == "task_delegation"
+
+
+def test_feedback_history_write_is_not_partial(tmp_path, monkeypatch):
+    path = tmp_path / "feedback_history.json"
+    monkeypatch.setattr(main_mod, "FEEDBACK_HISTORY_FILE", str(path))
+
+    main_mod.save_feedback_history([{"feedback": "ok", "response": object()}])
+
+    assert json.loads(path.read_text())[0]["feedback"] == "ok"
 
 
 @pytest.mark.asyncio

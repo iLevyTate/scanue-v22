@@ -1,8 +1,10 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import asyncio
 import copy
+import inspect
 import logging
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
 from .base import (
     AGENT_LLM_TIMEOUT_SECONDS,
     BaseAgent,
@@ -11,6 +13,49 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class AgentDelegation(BaseModel):
+    """Schema-validated delegation decision.
+
+    Asking for the decision as free text and reverse-engineering it is what
+    produced the routing bugs: the reply had to survive a reformatter, then a
+    ladder of regex and keyword heuristics, any of which could silently pick the
+    wrong specialists. A schema removes that entire class of failure -- the
+    provider constrains generation and the result is validated before use.
+
+    MPFC is deliberately absent: it always runs as the final integration stage.
+    """
+
+    vmpfc: bool = Field(
+        description="True if the task involves emotions, social dynamics, risk, or moral judgment"
+    )
+    ofc: bool = Field(
+        description="True if the task involves rewards, costs, financial trade-offs, or benefits"
+    )
+    acc: bool = Field(
+        description="True if the task involves conflicts, competing options, contradictions, or error monitoring"
+    )
+    reasoning: str = Field(
+        default="",
+        description="One or two sentences explaining why these specialists were chosen",
+    )
+    subtasks: List[str] = Field(
+        default_factory=list,
+        description="Concrete subtasks the specialists should address",
+    )
+
+    def to_stages(self) -> List[str]:
+        """Map the decision onto router stage names, MPFC always last."""
+        stages = []
+        if self.vmpfc:
+            stages.append("emotional_regulation")
+        if self.ofc:
+            stages.append("reward_processing")
+        if self.acc:
+            stages.append("conflict_detection")
+        stages.append("value_assessment")
+        return stages
 
 
 class DLPFCAgent(BaseAgent):
@@ -60,6 +105,124 @@ class DLPFCAgent(BaseAgent):
         """
         return ChatPromptTemplate.from_template(template)
 
+    def _create_delegation_prompt(self) -> ChatPromptTemplate:
+        """Prompt for the schema-constrained delegation call.
+
+        Deliberately shorter than the free-text prompt: the output shape is
+        enforced by the schema, so none of the "REQUIRED FORMAT" scaffolding is
+        needed and the model can spend its attention on the actual decision.
+        """
+        template = """You are the Dorsolateral Prefrontal Cortex (DLPFC) Agent, the central
+        controller of a brain-inspired multi-agent system. Decide which specialized
+        agents this task actually requires, and break the task into subtasks.
+
+        Current Task: {task}
+        Current State: {state}
+
+        Previous Response (if any): {previous_response}
+        User Feedback (if any): {feedback}
+
+        Feedback History:
+        {feedback_history}
+
+        Select ONLY the specialists this specific task needs -- do not select all of
+        them by default:
+        - VMPFC: emotions, social situations, risk assessment, moral decisions
+        - OFC: rewards, costs, outcomes, benefits, trade-offs
+        - ACC: conflicts, errors, competing options, monitoring
+
+        The MPFC agent always performs the final integration, so it is not your
+        choice to make. A simple factual question may need no specialists at all.
+        """
+        return ChatPromptTemplate.from_template(template)
+
+    def _delegation_messages(self, state: Dict[str, Any]):
+        return self._create_delegation_prompt().format_messages(
+            task=state.get("task", ""),
+            state=summarize_state(state),
+            previous_response=state.get("previous_response", "No previous response"),
+            feedback=state.get("feedback", "No feedback provided"),
+            feedback_history=self._format_feedback_history(state.get("feedback_history", [])),
+        )
+
+    async def _delegate_structured(self, state: Dict[str, Any]) -> Optional[AgentDelegation]:
+        """Ask for a schema-validated delegation decision.
+
+        Returns None -- so the caller falls back to the free-text path -- when
+        the provider cannot honor structured output or returns something that
+        fails validation. A timeout is NOT swallowed: it propagates so we do not
+        spend a second LLM call and blow the outer node timeout.
+        """
+        try:
+            structured_llm = self.llm.with_structured_output(AgentDelegation)
+        except Exception as e:
+            logger.warning("Structured output unavailable for DLPFC (%s); using text parsing", e)
+            return None
+
+        # with_structured_output is sync by contract and returns a Runnable.
+        # Anything else means this model cannot be driven this way.
+        if inspect.isawaitable(structured_llm):
+            structured_llm.close()  # otherwise it leaks a "never awaited" warning
+            return None
+        if not hasattr(structured_llm, "ainvoke"):
+            logger.warning("Structured output for DLPFC is not runnable; using text parsing")
+            return None
+
+        try:
+            result = await asyncio.wait_for(
+                structured_llm.ainvoke(self._delegation_messages(state)),
+                timeout=AGENT_LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            raise
+        except Exception as e:
+            logger.warning("Structured delegation call failed (%s); using text parsing", e)
+            return None
+
+        if not isinstance(result, AgentDelegation):
+            # Notably covers mocked LLMs in tests, which return sentinel objects.
+            logger.debug("Structured delegation returned %s; using text parsing", type(result).__name__)
+            return None
+
+        return result
+
+    def _result_from_delegation(self, delegation: AgentDelegation) -> Dict[str, Any]:
+        """Build the standard agent result from a validated delegation."""
+        selected = [
+            name for name, on in
+            (("VMPFC", delegation.vmpfc), ("OFC", delegation.ofc), ("ACC", delegation.acc))
+            if on
+        ] + ["MPFC"]
+
+        parts = []
+        if delegation.subtasks:
+            parts.append("📋 Subtasks:")
+            parts.extend(f"  • {s}" for s in delegation.subtasks)
+        parts.append("\n👥 Agent Assignments:")
+        parts.append(f"  • {', '.join(selected)}")
+        if delegation.reasoning:
+            parts.append(f"\n🧭 Reasoning:\n  {delegation.reasoning}")
+
+        model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown"))
+        self.last_raw_response = {
+            "model": model_name,
+            "response": delegation.model_dump_json(indent=2),
+        }
+
+        return {
+            "response": {"role": "assistant", "content": "\n".join(parts)},
+            "error": False,
+            "subtasks": [
+                {"task": s, "category": "subtask", "agent": "MPFC Agent"}
+                for s in delegation.subtasks
+            ],
+            "stage": "task_delegation",
+            # Consumed directly by the router, so no text parsing happens at all.
+            "delegated_agents": delegation.to_stages(),
+            "delegation_source": "structured_output",
+            "raw_llm_response": copy.deepcopy(self.last_raw_response),
+        }
+
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             # Log the compact summary rather than the whole state dict: the raw
@@ -67,6 +230,14 @@ class DLPFCAgent(BaseAgent):
             # both unreadable and needlessly sensitive now that logging is wired
             # up to a real handler.
             logger.debug("DLPFC Agent processing:\n%s", summarize_state(state))
+
+            # Preferred path: let the provider constrain generation to the
+            # delegation schema. Falls through to free-text parsing when the
+            # model or provider cannot do that.
+            delegation = await self._delegate_structured(state)
+            if delegation is not None:
+                logger.debug("Structured delegation: %s", delegation.to_stages())
+                return self._result_from_delegation(delegation)
 
             # Get task breakdown from LLM. The inner timeout mirrors
             # BaseAgent._process_with_timeout -- DLPFC overrides process() and so

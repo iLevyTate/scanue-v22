@@ -4,6 +4,7 @@ langchain-openai>=1.0,<2.0
 langchain-ollama>=1.0,<2.0
 langchain-huggingface>=1.0,<2.0
 openai>=2.0,<3.0
+pydantic>=2.0,<3.0
 python-dotenv>=1.0,<2.0
 pyyaml>=6.0,<7.0
 pytest>=8.0,<10.0
