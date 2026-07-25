@@ -352,6 +352,11 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
             agent_errors["DLPFC"] = error_msg
             if stage_log:
                 stage_log = log_stage_end(stage_log, result, error_msg)
+                # Annotate the failure branch too. Only the success branch did,
+                # so in the exact scenario worth debugging -- DLPFC failed and
+                # routing was guessed -- the log said nothing about who ran or why.
+                stage_log["delegation_source"] = "resilient_fallback"
+                stage_log["delegated_agents"] = list(resilient_delegation)
             delta = {
                 "response": result.get("response", {}),
                 "agent_errors": agent_errors,
@@ -430,6 +435,8 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if stage_log:
             stage_log = log_stage_end(stage_log, {"response": error_response}, str(e))
+            stage_log["delegation_source"] = "resilient_fallback"
+            stage_log["delegated_agents"] = list(resilient_delegation)
 
         # Mark agent failure but continue workflow with resilient delegation.
         # The router (get_next_stage) picks the next stage from delegated_agents.

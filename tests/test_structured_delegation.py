@@ -180,8 +180,8 @@ async def test_structured_timeout_does_not_trigger_a_second_call(agent):
     llm.ainvoke = AsyncMock(return_value=MagicMock(content="should not be reached"))
     agent.llm = llm
 
-    with patch("agents.dlpfc.AGENT_LLM_TIMEOUT_SECONDS", 0.01):
-        result = await agent.process({"task": "t"})
+    agent.llm_timeout = 0.01
+    result = await agent.process({"task": "t"})
 
     assert result["error"] is True
     assert "timed out" in result["response"]["content"].lower()
@@ -218,6 +218,26 @@ async def test_delegation_source_is_recorded_in_the_session_log():
     stage_log = delta["session_log"]["stages"][0]
     assert stage_log["delegation_source"] == "structured_text"
     assert stage_log["delegated_agents"] == ["emotional_regulation", "value_assessment"]
+
+
+@pytest.mark.asyncio
+async def test_resilient_fallback_is_annotated_in_the_session_log():
+    """Only the success branch annotated the stage log, so in the exact scenario
+    worth debugging -- DLPFC failed and routing was guessed -- the log said
+    nothing about who ran or why."""
+    state = {"task": "t", "completed_stages": [], "session_log": {"stages": []}}
+
+    with patch("utils.config.ConfigLoader.load_config", return_value=TEST_CONFIG), \
+         patch("agents.factory.LLMFactory.create_llm", return_value=MagicMock()), \
+         patch("agents.dlpfc.DLPFCAgent.process", side_effect=RuntimeError("provider down")):
+        delta = await process_task_delegation(state)
+
+    stage_log = delta["session_log"]["stages"][0]
+    assert stage_log["delegation_source"] == "resilient_fallback"
+    assert stage_log["delegated_agents"] == [
+        "emotional_regulation", "conflict_detection", "value_assessment",
+    ]
+    assert stage_log["error"]
 
 
 @pytest.mark.asyncio

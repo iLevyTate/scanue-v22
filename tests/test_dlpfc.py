@@ -171,8 +171,8 @@ async def test_dlpfc_applies_inner_llm_timeout(dlpfc_agent, test_state):
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = slow_ainvoke
 
-    with patch("agents.dlpfc.AGENT_LLM_TIMEOUT_SECONDS", 0.01):
-        result = await dlpfc_agent.process(test_state)
+    dlpfc_agent.llm_timeout = 0.01
+    result = await dlpfc_agent.process(test_state)
 
     assert result["error"] is True
     assert "timed out" in result["response"]["content"].lower()

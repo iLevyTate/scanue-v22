@@ -5,8 +5,8 @@ import inspect
 import logging
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+from agents.factory import LLMFactory
 from .base import (
-    AGENT_LLM_TIMEOUT_SECONDS,
     BaseAgent,
     format_feedback_history,
     state_text,
@@ -171,8 +171,9 @@ class DLPFCAgent(BaseAgent):
 
         try:
             result = await asyncio.wait_for(
-                structured_llm.ainvoke(self._delegation_messages(state)),
-                timeout=AGENT_LLM_TIMEOUT_SECONDS,
+                LLMFactory.wrap_with_retry(structured_llm, self.model_config)
+                    .ainvoke(self._delegation_messages(state)),
+                timeout=self.llm_timeout,
             )
         except asyncio.TimeoutError:
             raise
@@ -246,7 +247,7 @@ class DLPFCAgent(BaseAgent):
             # "inner timeout fires before the outer node timeout" invariant
             # (asserted by two tests) vacuous for the one agent that always runs.
             response = await asyncio.wait_for(
-                self.llm.ainvoke(
+                self.invoker().ainvoke(
                     self.prompt.format_messages(
                         task=state.get("task", ""),
                         state=summarize_state(state),
@@ -255,7 +256,7 @@ class DLPFCAgent(BaseAgent):
                         feedback_history=self._format_feedback_history(state.get("feedback_history", []))
                     )
                 ),
-                timeout=AGENT_LLM_TIMEOUT_SECONDS,
+                timeout=self.llm_timeout,
             )
 
             logger.debug("DLPFC Agent received response: %s", response)
@@ -285,7 +286,7 @@ class DLPFCAgent(BaseAgent):
         except asyncio.TimeoutError:
             # Same wording BaseAgent uses, so callers see one timeout message.
             error_msg = "Request timed out. Please try again."
-            logger.warning("DLPFC LLM call timed out after %ss", AGENT_LLM_TIMEOUT_SECONDS)
+            logger.warning("DLPFC LLM call timed out after %ss", self.llm_timeout)
             return {
                 "response": {"role": "assistant", "content": error_msg},
                 "error": True,

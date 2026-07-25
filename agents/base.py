@@ -15,10 +15,27 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Inner LLM call timeout. MUST stay strictly less than the outer per-node timeout
-# (NODE_TIMEOUT_SECONDS in workflow.py, 45s) so the inner call fails first and is
-# reported cleanly instead of racing the node's outer wait_for.
+# Default inner LLM call timeout, used when a model has no `timeout:` in config.
+# MUST stay strictly less than the outer per-node timeout (NODE_TIMEOUT_SECONDS
+# in workflow.py) so the inner call fails first and is reported cleanly instead
+# of racing the node's outer wait_for.
 AGENT_LLM_TIMEOUT_SECONDS = 30.0
+
+
+def resolve_llm_timeout(config: Dict[str, Any]) -> float:
+    """Per-model inner timeout, from `timeout:` in config/agents.yaml.
+
+    This constant used to be the hard cap regardless of configuration: a user
+    setting `timeout: 120` for a slow local model still got killed at 30s, with
+    no way to change it short of editing source. The client-side timeout the
+    factory passes was therefore dead for any value above 30.
+    """
+    timeout = (config or {}).get("timeout")
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        return AGENT_LLM_TIMEOUT_SECONDS
+    return timeout if timeout > 0 else AGENT_LLM_TIMEOUT_SECONDS
 
 
 # Bounds on the HITL feedback history injected into every prompt.
@@ -139,6 +156,9 @@ class BaseAgent(ABC):
         """
         self.agent_name = agent_name
         self.models = {}
+        # Resolved config for the primary model. Kept so the agent can derive its
+        # timeout and retry policy instead of hardcoding them.
+        self.model_config: Dict[str, Any] = {}
 
         # Load agent configuration
         agent_config = ConfigLoader.get_agent_config(agent_name)
@@ -161,6 +181,9 @@ class BaseAgent(ABC):
                         model_type, agent_name, e,
                     )
 
+        if "primary" in model_configs:
+            self.model_config = model_configs["primary"] or {}
+
         # Fallback/Legacy Initialization if no primary model found
         if "primary" not in self.models:
             logger.debug("No primary model configured for %s, falling back to legacy/default...", agent_name)
@@ -170,14 +193,24 @@ class BaseAgent(ABC):
                 env_var_fallback=model_env_key
             )
             self.models["primary"] = LLMFactory.create_llm(fallback_config)
+            self.model_config = fallback_config
 
         # Set primary model as default self.llm for backward compatibility
         self.llm = self.models.get("primary")
         if not self.llm:
             raise ValueError(f"Failed to initialize primary model for agent {agent_name}")
 
+        self.llm_timeout = resolve_llm_timeout(self.model_config)
         self.prompt = self._create_prompt()     # Agent-specific prompt template
         self.last_raw_response = None           # Cache for debugging and logging
+
+    def invoker(self):
+        """The primary model wrapped in the configured retry policy.
+
+        Built per call rather than cached so tests that reassign `self.llm` (and
+        callers that swap models) get the current one.
+        """
+        return LLMFactory.wrap_with_retry(self.llm, self.model_config)
 
     @abstractmethod
     def _create_prompt(self) -> ChatPromptTemplate:
@@ -250,11 +283,11 @@ class BaseAgent(ABC):
                 self.agent_name, prompt_chars, prompt_chars // 4,
             )
 
-            # Invoke the LLM
-            # Note: self.llm is now an alias for self.models['primary']
+            # Invoke the LLM through the retry wrapper. The timeout covers all
+            # attempts, so a flapping provider cannot exceed the node budget.
             response = await asyncio.wait_for(
-                self.llm.ainvoke(formatted_messages),
-                timeout=AGENT_LLM_TIMEOUT_SECONDS
+                self.invoker().ainvoke(formatted_messages),
+                timeout=self.llm_timeout
             )
 
             # Store the complete raw response for logging
