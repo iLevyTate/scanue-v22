@@ -5,6 +5,7 @@ import sys
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any
 from dotenv import load_dotenv
 from langgraph.errors import GraphRecursionError
@@ -24,9 +25,22 @@ except Exception:
 # Load environment variables
 load_dotenv()
 
-# File to store persistent feedback history
-FEEDBACK_HISTORY_FILE = "feedback_history.json"
-LOGS_DIRECTORY = "logs"
+# Persistent state locations.
+#
+# Anchored to the project root rather than the process CWD. As bare relative
+# paths these silently fragmented: launching the CLI from another directory
+# started an empty feedback history and a second logs/ tree, with no warning.
+# utils/config.py already resolves its config path this way (ConfigLoader
+# ._config_path); this matches it. SCANUE_STATE_DIR overrides the root.
+PROJECT_ROOT = Path(__file__).resolve().parent
+STATE_DIR = Path(os.getenv("SCANUE_STATE_DIR", PROJECT_ROOT))
+FEEDBACK_HISTORY_FILE = str(STATE_DIR / "feedback_history.json")
+LOGS_DIRECTORY = str(STATE_DIR / "logs")
+
+# Keep the most recent N session logs; older ones are pruned after each run.
+# 0 disables pruning. Per-file size grows with feedback history, so an unbounded
+# logs/ grows superlinearly.
+LOG_RETENTION_COUNT = int(os.getenv("SCANUE_LOG_RETENTION", "50"))
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +102,26 @@ def save_feedback_history(feedback_history):
         logger.warning("Could not save feedback history: %s", e)
         print(f"Warning: Could not save feedback history: {str(e)}")
 
+def _prune_old_logs() -> None:
+    """Keep only the most recent LOG_RETENTION_COUNT session logs.
+
+    Never raises: losing a run because cleanup failed would be worse than
+    leaving a stale file behind.
+    """
+    if LOG_RETENTION_COUNT <= 0:
+        return
+    try:
+        logs = sorted(
+            Path(LOGS_DIRECTORY).glob("session_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in logs[LOG_RETENTION_COUNT:]:
+            stale.unlink()
+    except Exception as e:
+        logger.debug("Could not prune old session logs: %s", e)
+
+
 def _response_content(response: Any) -> Any:
     """Extract the text of a response that may be structured or already plain.
 
@@ -146,6 +180,8 @@ def save_session_log(session_log: Dict[str, Any]) -> str:
 
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(payload)
+
+        _prune_old_logs()
 
         return filename
     except Exception as e:

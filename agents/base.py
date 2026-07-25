@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import logging
+import os
 from typing import Optional, Dict, Any
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
@@ -20,27 +21,58 @@ logger = logging.getLogger(__name__)
 AGENT_LLM_TIMEOUT_SECONDS = 30.0
 
 
+# Bounds on the HITL feedback history injected into every prompt.
+#
+# This history is persisted across sessions and grows monotonically -- and it was
+# injected in full into all 5-6 LLM calls of every run. Measured at ~1,250 chars
+# per entry, 25 entries filled ~95% of an 8k context window and 50 entries
+# exceeded it, at which point every agent starts failing at once with a generic
+# provider error. These are the only things standing between long-term use and
+# that wall. Override via SCANUE_FEEDBACK_MAX_ENTRIES / SCANUE_FEEDBACK_CHAR_BUDGET.
+FEEDBACK_MAX_ENTRIES = int(os.getenv("SCANUE_FEEDBACK_MAX_ENTRIES", "5"))
+FEEDBACK_CHAR_BUDGET = int(os.getenv("SCANUE_FEEDBACK_CHAR_BUDGET", "4000"))
+# Per-entry cap on the stored response, which is a whole LLM answer.
+FEEDBACK_RESPONSE_CHAR_BUDGET = int(os.getenv("SCANUE_FEEDBACK_RESPONSE_CHARS", "500"))
+
+
+def _clip(text: str, budget: int) -> str:
+    text = str(text)
+    return text if len(text) <= budget else text[:budget].rstrip() + " [...truncated]"
+
+
 def format_feedback_history(history: Any) -> str:
     """Render HITL feedback history as readable text for prompt injection.
 
     Passing the raw list straight into the template rendered a Python repr
     (``[{'response': ..., 'feedback': ...}]``) into the prompt. Shared by every
     agent so DLPFC and the specialists format history identically.
+
+    Only the most recent FEEDBACK_MAX_ENTRIES are rendered, each response is
+    clipped, and the whole block is capped -- see the note on the constants
+    above. Recent feedback is also the most relevant, so the window is not
+    purely a cost measure.
     """
     if not history:
         return "No previous feedback"
 
+    total = len(history)
+    recent = list(history)[-FEEDBACK_MAX_ENTRIES:]
+
     formatted = []
-    for entry in history:
+    for entry in recent:
         if not isinstance(entry, dict):
-            formatted.append(str(entry))
+            formatted.append(_clip(entry, FEEDBACK_RESPONSE_CHAR_BUDGET))
             continue
         formatted.append(
             f"Stage: {entry.get('stage', 'unknown')}\n"
-            f"Response: {entry.get('response', '')}\n"
-            f"Feedback: {entry.get('feedback', '')}\n"
+            f"Response: {_clip(entry.get('response', ''), FEEDBACK_RESPONSE_CHAR_BUDGET)}\n"
+            f"Feedback: {_clip(entry.get('feedback', ''), FEEDBACK_RESPONSE_CHAR_BUDGET)}\n"
         )
-    return "\n".join(formatted)
+
+    if total > len(recent):
+        formatted.insert(0, f"(showing the {len(recent)} most recent of {total} feedback entries)\n")
+
+    return _clip("\n".join(formatted), FEEDBACK_CHAR_BUDGET)
 
 
 def state_text(state: Dict[str, Any], key: str, placeholder: str) -> str:
@@ -208,6 +240,14 @@ class BaseAgent(ABC):
                 previous_response=state_text(state, "previous_response", "No previous response"),
                 feedback=state_text(state, "feedback", "No feedback provided"),
                 feedback_history=format_feedback_history(state.get("feedback_history", []))
+            )
+
+            # Log the prompt size. Ollama silently drops anything past num_ctx,
+            # so without this a truncated prompt is completely invisible.
+            prompt_chars = sum(len(str(m.content)) for m in formatted_messages)
+            logger.debug(
+                "%s prompt: %d chars (~%d tokens)",
+                self.agent_name, prompt_chars, prompt_chars // 4,
             )
 
             # Invoke the LLM

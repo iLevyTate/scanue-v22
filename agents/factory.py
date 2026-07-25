@@ -46,6 +46,7 @@ class LLMFactory:
                 temperature=temperature,
                 api_key=config.get("api_key") or os.getenv("OPENAI_API_KEY"),
                 timeout=config.get("timeout", 30.0),
+                max_tokens=config.get("max_tokens"),
                 max_retries=config.get("max_retries", 3)
             )
 
@@ -56,12 +57,24 @@ class LLMFactory:
             # extra="ignore", so passing timeout= was silently dropped and local
             # runs had no client-side timeout at all. The underlying ollama
             # client takes it via client_kwargs.
-            return ChatOllama(
+            kwargs = dict(
                 model=model_name,
                 temperature=temperature,
                 base_url=config.get("base_url", "http://localhost:11434"),
                 client_kwargs={"timeout": config.get("timeout", 120.0)}  # Local models might be slower
             )
+
+            # num_ctx defaults to None, which means the Ollama server applies its
+            # own default (commonly 2048 tokens) and silently DROPS anything past
+            # it -- no error, no log line, just a truncated prompt. Setting it
+            # explicitly is the only way to know the model saw what we sent.
+            if config.get("num_ctx") is not None:
+                kwargs["num_ctx"] = config["num_ctx"]
+            if config.get("max_tokens") is not None:
+                # Ollama's name for max output tokens.
+                kwargs["num_predict"] = config["max_tokens"]
+
+            return ChatOllama(**kwargs)
 
         elif provider == "huggingface":
             from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
