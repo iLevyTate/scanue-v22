@@ -37,22 +37,21 @@ For clarity:
    cd scanue-v22
    ```
 
-2. **Install dependencies:**
+2. **Install:**
    ```bash
-   pip install -e .          # or: pip install -e ".[dev]" to also get pytest/ruff/mypy
+   pip install -e .          # add ".[dev]" for pytest, ruff and mypy
    ```
-   `pip install -r requirements.txt` still works, but installs the dependencies
-   without the package itself (so the `scanue` command is not created).
+   Dependencies are declared in `pyproject.toml`.
 
 3. **(Optional) Set up environment variables** in a `.env` file (recommended)
 
 4. **Run the application:**
    ```bash
    # Interactive mode (prompts for a task, then offers to collect feedback)
-   python main.py
+   scanue                    # or: python main.py
 
    # One-shot mode (runs a single task non-interactively and exits)
-   python main.py "How should I structure my team's weekly meetings?"
+   scanue "How should I structure my team's weekly meetings?"
    ```
 
 ## **Configuration**
