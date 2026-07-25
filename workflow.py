@@ -1,25 +1,32 @@
-import sys
-import logging
-from typing import Dict, Any, TypedDict
-from langgraph.graph import StateGraph, END
-from agents.dlpfc import DLPFCAgent
-from agents.specialized import VMPFCAgent, OFCAgent, ACCAgent, MPFCAgent
 import asyncio
-from datetime import datetime
 import copy
+import logging
 import re
+from collections.abc import Hashable, Mapping
+from datetime import datetime
+from typing import Any, TypedDict
+
+from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
+from agents.dlpfc import DLPFCAgent
+from agents.specialized import ACCAgent, MPFCAgent, OFCAgent, VMPFCAgent
 
 logger = logging.getLogger(__name__)
 
-# Ensure Unicode output works on Windows consoles where stdout may default to cp1252.
-try:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    # Never fail the application due to console encoding.
-    pass
+# An agent response: {"role": "assistant", "content": "..."}.
+ResponseDict = dict[str, str]
+
+
+def _response_content(response: Any) -> Any:
+    """Extract the text of a response that may be structured or already plain.
+
+    Agents return ``{"role": ..., "content": ...}``, but error paths and older
+    callers may hand back a bare string, so both shapes are accepted.
+    """
+    if isinstance(response, dict) and "content" in response:
+        return response["content"]
+    return response
 
 # Outer per-node timeout. MUST stay strictly greater than the agent's inner LLM
 # timeout (AGENT_LLM_TIMEOUT_SECONDS in agents/base.py, 30s) so the inner call
@@ -36,24 +43,46 @@ NODE_TIMEOUT_SECONDS = 45.0
 PEER_INSIGHT_CHAR_BUDGET = 4000
 
 
+class AgentResult(TypedDict, total=False):
+    """What an agent's `process()` returns.
+
+    Previously an untyped `Dict[str, Any]` shared by five producers and two
+    consumers, with no shared definition of the keys.
+    """
+    response: ResponseDict
+    error: bool
+    raw_llm_response: dict[str, Any] | None
+    subtasks: list[dict[str, Any]]
+    stage: str
+    delegated_agents: list[str]
+    delegation_source: str
+
+
 class AgentState(TypedDict, total=False):
     task: str
-    stage: str
-    response: str
-    subtasks: list
+    stage: str               # Seeded once; no node writes it (see main.py)
+    # Structured `{"role": ..., "content": ...}` in practice. Declared `str`
+    # while every producer stored a dict, which is why two separate unwrap
+    # helpers had to exist.
+    response: ResponseDict
+    subtasks: list[dict[str, Any]]
     feedback: str
     previous_response: str
-    feedback_history: list
-    session_log: dict
+    feedback_history: list[dict[str, Any]]
+    session_log: dict[str, Any]
     error: bool
-    delegated_agents: list   # Which specialist stages DLPFC selected, in order
+    delegated_agents: list[str]   # Which specialist stages DLPFC selected, in order
     # How that selection was made: "structured_output" (schema-validated, the
     # only path where the model actually stated its decision), or one of the
     # text-parsing fallbacks -- "structured_text" / "semantic" / "pattern" /
     # "heuristic", in descending order of confidence.
     delegation_source: str
-    agent_responses: dict    # Collected responses keyed by agent name
-    agent_errors: dict       # Per-agent failures (workflow continues past these)
+    agent_responses: dict[str, ResponseDict]  # Collected responses by agent name
+    agent_errors: dict[str, str]              # Per-agent failures (run continues past these)
+    # Set by _prepare_value_assessment_state and read by agents.base.
+    # summarize_state -- previously an undeclared cross-module contract.
+    previous_agent_insights: str
+    unavailable_agents: list[str]
     # Stages that have finished executing (success OR failure). This is a plain
     # LastValue channel with NO reducer: every node COPIES the incoming list,
     # appends its own stage, and returns the whole list as a delta. Never add an
@@ -73,11 +102,11 @@ STAGE_AGENTS = {
 
 
 def log_stage_start(
-    state: Dict[str, Any],
+    state: Mapping[str, Any],
     stage_name: str,
     agent_name: str,
-    model: Dict[str, Any] = None,
-) -> Dict:
+    model: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Log the start of a processing stage."""
     if "session_log" not in state:
         return None
@@ -106,11 +135,16 @@ def log_stage_start(
     return stage_log
 
 
-def log_stage_end(stage_log: Dict, result: Dict[str, Any], error: str = None) -> Dict:
-    """Log the end of a processing stage."""
-    if not stage_log:
-        return None
+def log_stage_end(
+    stage_log: dict[str, Any],
+    result: dict[str, Any],
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Log the end of a processing stage.
 
+    Callers guard on `stage_log` being present (it is None when the run has no
+    session log), so this takes and returns a concrete dict.
+    """
     # Record end time
     end_time = datetime.now().isoformat()
     stage_log["end_time"] = end_time
@@ -142,10 +176,10 @@ def log_stage_end(stage_log: Dict, result: Dict[str, Any], error: str = None) ->
 
 
 def _session_log_delta(
-    state: Dict[str, Any],
-    stage_log: Dict,
-    agent_errors: Dict[str, str] = None,
-) -> Dict[str, Any]:
+    state: Mapping[str, Any],
+    stage_log: dict[str, Any] | None,
+    agent_errors: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Build a delta that appends stage_log to session_log["stages"].
 
     Returns a fresh session_log dict (never mutates the incoming one) so nodes
@@ -179,7 +213,7 @@ SEMANTIC_PATTERNS = {
     'VMPFC': ['emotional', 'feeling', 'social', 'moral', 'risk', 'anxiety', 'fear', 'empathy', 'interpersonal'],
     'OFC': ['reward', 'benefit', 'cost', 'trade', 'tradeoff', 'financial', 'profit', 'loss'],
     'ACC': ['conflict', 'error', 'mistake', 'competing', 'contradiction', 'monitor'],
-    'MPFC': []  # Always included
+    # MPFC is deliberately absent: it always runs, so it needs no keywords.
 }
 
 # Inflections allowed after a keyword stem, so "rewards"/"conflicts"/"emotionally"
@@ -260,9 +294,6 @@ def parse_agent_assignments_with_source(dlpfc_response: str) -> tuple:
         logger.debug("Using semantic analysis fallback...")
 
         for agent_name, keywords in SEMANTIC_PATTERNS.items():
-            if agent_name == 'MPFC':  # Always include MPFC
-                continue
-
             # Check if any semantic keywords are present
             for keyword in keywords:
                 if _keyword_present(keyword, response_lower):
@@ -274,7 +305,7 @@ def parse_agent_assignments_with_source(dlpfc_response: str) -> tuple:
                     break
 
     # STRATEGY 3: Original pattern matching (final fallback)
-    if not agent_assignments and not structured_found:
+    if not agent_assignments:
         logger.debug("Using original pattern matching...")
         for agent_name, stage_name in agent_map.items():
             patterns = [
@@ -332,7 +363,7 @@ def parse_agent_assignments_with_source(dlpfc_response: str) -> tuple:
     return agent_assignments, source
 
 
-async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
+async def process_task_delegation(state: AgentState) -> dict[str, Any]:
     """Process task delegation through DLPFC agent.
 
     Returns a delta dict (declared AgentState keys only). On any failure the
@@ -461,7 +492,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
         return delta
 
 
-def _prepare_value_assessment_state(state: Dict[str, Any]) -> Dict[str, Any]:
+def _prepare_value_assessment_state(state: Mapping[str, Any]) -> dict[str, Any]:
     """Enrich MPFC's input with a summary of the other agents' insights.
 
     Agents that FAILED are excluded. Their "response" is an error string such as
@@ -470,7 +501,7 @@ def _prepare_value_assessment_state(state: Dict[str, Any]) -> Dict[str, Any]:
     and present the result to the user as the answer. MPFC is told which peers
     are missing instead, so it can qualify its conclusion.
     """
-    enhanced_state = copy.deepcopy(state)
+    enhanced_state: dict[str, Any] = dict(copy.deepcopy(state))
     responses = state.get("agent_responses") or {}
     failed = set(state.get("agent_errors") or {})
 
@@ -500,7 +531,9 @@ def _prepare_value_assessment_state(state: Dict[str, Any]) -> Dict[str, Any]:
     return enhanced_state
 
 
-async def _run_specialist_stage(state: Dict[str, Any], stage_name: str, *, prepare_state=None) -> Dict[str, Any]:
+async def _run_specialist_stage(
+    state: Mapping[str, Any], stage_name: str, *, prepare_state=None
+) -> dict[str, Any]:
     """Run a single specialist stage and return a delta dict.
 
     Drives all four specialist stages. Copies the incoming accumulator channels
@@ -589,25 +622,25 @@ async def _run_specialist_stage(state: Dict[str, Any], stage_name: str, *, prepa
 # logs can keep referencing them by name. Each just prints its banner and defers
 # to the shared specialist runner.
 
-async def process_emotional_regulation(state: Dict[str, Any]) -> Dict[str, Any]:
+async def process_emotional_regulation(state: AgentState) -> dict[str, Any]:
     """Process emotional regulation through VMPFC agent."""
     print("\n❤️ VMPFC Agent: Analyzing emotional aspects...")
     return await _run_specialist_stage(state, "emotional_regulation")
 
 
-async def process_reward_processing(state: Dict[str, Any]) -> Dict[str, Any]:
+async def process_reward_processing(state: AgentState) -> dict[str, Any]:
     """Process reward processing through OFC agent."""
     print("\n🎯 OFC Agent: Evaluating rewards and outcomes...")
     return await _run_specialist_stage(state, "reward_processing")
 
 
-async def process_conflict_detection(state: Dict[str, Any]) -> Dict[str, Any]:
+async def process_conflict_detection(state: AgentState) -> dict[str, Any]:
     """Process conflict detection through ACC agent."""
     print("\n⚡ ACC Agent: Detecting potential conflicts...")
     return await _run_specialist_stage(state, "conflict_detection")
 
 
-async def process_value_assessment(state: Dict[str, Any]) -> Dict[str, Any]:
+async def process_value_assessment(state: AgentState) -> dict[str, Any]:
     """Process value assessment through MPFC agent - integrates all prior responses."""
     print("\n💡 MPFC Agent: Assessing values and integrating insights...")
     return await _run_specialist_stage(
@@ -615,7 +648,7 @@ async def process_value_assessment(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-def get_next_stage(state: Dict[str, Any]) -> str:
+def get_next_stage(state: Mapping[str, Any]) -> str:
     """Router: pick the first delegated stage that has not completed yet.
 
     Module-level and pure so it is unit-testable in isolation. Because every node
@@ -630,7 +663,7 @@ def get_next_stage(state: Dict[str, Any]) -> str:
     return END
 
 
-def create_workflow() -> StateGraph:
+def create_workflow() -> CompiledStateGraph:
     """Create the dynamic workflow graph."""
     workflow = StateGraph(AgentState)
 
@@ -643,9 +676,12 @@ def create_workflow() -> StateGraph:
 
     # Every stage routes through the same conditional edge function. The mapping
     # below enumerates every possible target so LangGraph always has a valid path.
-    all_stages = ["task_delegation", "emotional_regulation", "reward_processing", "conflict_detection", "value_assessment"]
+    all_stages = [
+        "task_delegation", "emotional_regulation", "reward_processing",
+        "conflict_detection", "value_assessment",
+    ]
 
-    comprehensive_mappings = {END: END}
+    comprehensive_mappings: dict[Hashable, str] = {END: END}
     for target_stage in all_stages:
         comprehensive_mappings[target_stage] = target_stage
 
@@ -662,7 +698,7 @@ def create_workflow() -> StateGraph:
     return workflow.compile()
 
 
-def process_hitl_feedback(state: Dict[str, Any], feedback: str) -> Dict[str, Any]:
+def process_hitl_feedback(state: Mapping[str, Any], feedback: str) -> dict[str, Any]:
     """Process human-in-the-loop feedback for continuous system improvement.
 
     This function integrates user feedback into the system state, maintaining
@@ -673,14 +709,22 @@ def process_hitl_feedback(state: Dict[str, Any], feedback: str) -> Dict[str, Any
         state: Current workflow state containing agent responses and history
         feedback: User's feedback on the system's performance
 
-    Returns:
-        Dict: Updated state with integrated feedback and history
-    """
-    if not state.get("feedback_history"):
-        state["feedback_history"] = []
+    Returns a NEW state dict and never mutates the one it was handed. This is
+    the same delta discipline every graph node follows (see
+    `_run_specialist_stage` and `_session_log_delta`); this function was the
+    lone exception, and it mutated the caller's live `feedback_history` list --
+    so the append was observable in main.py before the return value was read,
+    leaving it ambiguous whether the caller depended on the return or the
+    side effect.
 
-    # Extract content from the response if it's structured
-    response_content = state["response"]["content"] if isinstance(state.get("response"), dict) and "content" in state["response"] else state.get("response", "")
+    Args:
+        state: Current workflow state containing agent responses and history
+        feedback: User's feedback on the system's performance
+
+    Returns:
+        Dict: A new state dict with integrated feedback and history
+    """
+    response_content = _response_content(state.get("response"))
 
     # Create feedback entry.
     #
@@ -696,26 +740,26 @@ def process_hitl_feedback(state: Dict[str, Any], feedback: str) -> Dict[str, Any
         "timestamp": datetime.now().isoformat()
     }
 
-    # Add to feedback history
-    state["feedback_history"].append(feedback_entry)
-    state["feedback"] = feedback
-    state["previous_response"] = response_content
+    updated: dict[str, Any] = {
+        **state,
+        "feedback_history": list(state.get("feedback_history") or []) + [feedback_entry],
+        "feedback": feedback,
+        "previous_response": response_content,
+    }
 
     # Add to session log if available
-    if "session_log" in state:
-        state["session_log"]["user_feedback"] = feedback
-
-        # Add feedback log entry
+    session_log = state.get("session_log")
+    if session_log is not None:
         feedback_log = {
             "stage": "user_feedback",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": feedback_entry["timestamp"],
             "feedback": feedback,
-            "response": state.get("response", "")
+            "response": state.get("response", ""),
+        }
+        updated["session_log"] = {
+            **session_log,
+            "user_feedback": feedback,
+            "feedback_entries": list(session_log.get("feedback_entries") or []) + [feedback_log],
         }
 
-        if "feedback_entries" not in state["session_log"]:
-            state["session_log"]["feedback_entries"] = []
-
-        state["session_log"]["feedback_entries"].append(feedback_log)
-
-    return state
+    return updated

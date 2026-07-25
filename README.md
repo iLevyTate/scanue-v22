@@ -75,13 +75,22 @@ See `docs/local_models.md` for examples and recommendations.
 5. (Optional) User provides feedback (persisted to `feedback_history.json`)
 
 ## **Testing**
-Run the test suite:
 ```bash
-pytest tests/
+pip install -e ".[dev]"
+pytest tests/       # 195 tests, fully offline — no provider, no API key
+ruff check .
+mypy main.py workflow.py agents utils
 ```
 
-The suite runs offline — no provider is contacted and no API key is required.
-CI runs it on every push and pull request across Python 3.11–3.13.
+CI runs all three on every push and pull request, across Python 3.11–3.13.
+
+## **Partial results**
+Specialists fail independently: if VMPFC cannot reach its model, the run
+continues without it rather than aborting. When that happens the CLI says so
+explicitly, and the session log records `degraded: true` alongside
+`agent_errors`. A failed agent's output is **excluded** from MPFC's synthesis
+and MPFC is told which perspective is missing, so a partial analysis is never
+presented as a complete one.
 
 ## **Delegation**
 DLPFC decides which specialists a task needs. It first asks the model for a
@@ -111,6 +120,15 @@ grep -h '"delegation_source"' logs/session_*.json | sort | uniq -c | sort -rn
 
 A high fallback rate usually means the model is too small to follow the schema;
 DLPFC drives all routing, so it benefits most from your strongest model.
+
+## **What a run records**
+Each run writes `logs/session_*.json` (kept to the 50 most recent) containing,
+per stage: the resolved model and provider, the rendered prompt, token usage and
+finish reason, duration, and any error — plus run-level totals and
+`wall_clock_ms`. Token counts and the elapsed time are printed after each run.
+
+A `finish_reason` of `length` means the response was cut off mid-generation;
+those stages are named in the summary rather than passing as complete answers.
 
 ## **Troubleshooting**
 Diagnostics are logged to stderr. The default level is `WARNING`; raise it to see

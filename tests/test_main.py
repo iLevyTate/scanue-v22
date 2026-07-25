@@ -1,8 +1,8 @@
 import json
 import pathlib
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 from langgraph.errors import GraphRecursionError
 
 import main as main_mod
@@ -390,8 +390,7 @@ async def test_missing_api_key(monkeypatch):
                 }
             }
         }
-    }):
-        with pytest.raises(SystemExit) as excinfo:
-            await main(["test task"])
+    }), pytest.raises(SystemExit) as excinfo:
+        await main(["test task"])
 
     assert excinfo.value.code == 1

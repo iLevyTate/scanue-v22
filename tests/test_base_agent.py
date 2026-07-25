@@ -1,10 +1,13 @@
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-from agents.base import BaseAgent, AGENT_LLM_TIMEOUT_SECONDS, state_text, summarize_state
-from workflow import NODE_TIMEOUT_SECONDS
-from langchain_core.prompts import ChatPromptTemplate
-from typing import Dict, Any
 import asyncio
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from langchain_core.prompts import ChatPromptTemplate
+
+from agents.base import AGENT_LLM_TIMEOUT_SECONDS, BaseAgent, state_text, summarize_state
+from workflow import NODE_TIMEOUT_SECONDS
+
 
 class TestAgent(BaseAgent):
     """Test implementation of BaseAgent"""
@@ -12,11 +15,11 @@ class TestAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(agent_name="TEST", model_env_key="TEST_MODEL")
-        
+
     def _create_prompt(self) -> ChatPromptTemplate:
         return ChatPromptTemplate.from_template("Test prompt: {task}")
-        
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def process(self, state: dict[str, Any]) -> dict[str, Any]:
         return await super().process(state)
 
 @pytest.fixture
@@ -84,7 +87,7 @@ async def test_base_agent_timeout(test_agent, test_state):
         return None
 
     test_agent.process = mock_process
-    
+
     with pytest.raises(asyncio.TimeoutError):
         async with asyncio.timeout(0.001):
             await test_agent.process(test_state)

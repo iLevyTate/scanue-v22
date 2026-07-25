@@ -1,13 +1,22 @@
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-from workflow import (
-    create_workflow, process_hitl_feedback, NODE_TIMEOUT_SECONDS,
-    parse_agent_assignments, _prepare_value_assessment_state, PEER_INSIGHT_CHAR_BUDGET,
-    process_task_delegation, process_emotional_regulation,
-    process_reward_processing, process_conflict_detection, process_value_assessment,
-)
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from agents.base import AGENT_LLM_TIMEOUT_SECONDS
+from workflow import (
+    NODE_TIMEOUT_SECONDS,
+    PEER_INSIGHT_CHAR_BUDGET,
+    _prepare_value_assessment_state,
+    create_workflow,
+    parse_agent_assignments,
+    process_conflict_detection,
+    process_emotional_regulation,
+    process_hitl_feedback,
+    process_reward_processing,
+    process_task_delegation,
+    process_value_assessment,
+)
 
 # Mock ChatOpenAI at import time
 mock_chat_openai = AsyncMock()
@@ -279,9 +288,8 @@ async def test_cancellation_propagates(mock_env_vars, mock_state):
     async def dlpfc_cancel(self, state):
         raise asyncio.CancelledError()
 
-    with patch("agents.dlpfc.DLPFCAgent.process", new=dlpfc_cancel):
-        with pytest.raises(asyncio.CancelledError):
-            await process_task_delegation(mock_state)
+    with patch("agents.dlpfc.DLPFCAgent.process", new=dlpfc_cancel), pytest.raises(asyncio.CancelledError):
+        await process_task_delegation(mock_state)
 
 
 # --------------------------------------------------------------------------- #

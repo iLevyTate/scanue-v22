@@ -1,0 +1,91 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scanue-v22"
+version = "1.2.0"
+description = "Brain-inspired multi-agent CLI orchestrating specialized PFC-region agents with LangGraph"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-core>=1.0,<2.0",
+    "langgraph>=1.0,<2.0",
+    "langchain-openai>=1.0,<2.0",
+    "langchain-ollama>=1.0,<2.0",
+    "langchain-huggingface>=1.0,<2.0",
+    "openai>=2.0,<3.0",
+    "pydantic>=2.0,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "pyyaml>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10.0",
+    "pytest-asyncio>=0.23,<2.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML",
+]
+
+[project.scripts]
+scanue = "main:cli"
+
+[tool.setuptools]
+py-modules = ["main", "workflow"]
+
+[tool.setuptools.packages.find]
+include = ["agents*", "utils*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings (incl. trailing whitespace)
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+]
+ignore = [
+    "B008",   # function call in default argument -- not used here, but noisy with DI
+    "SIM105", # contextlib.suppress over try/except/pass, less readable in hot paths
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately assert on long literal prompts and mock chains.
+# W291/W293: mock LLM responses are triple-quoted fixtures whose trailing
+# whitespace is literal test input, not formatting.
+# SIM117: nested `with patch(...)` blocks read better than one giant context
+# line when a test stacks five patches.
+"tests/*" = ["E501", "W291", "W293", "SIM117"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+# Deliberately NOT --strict: LangChain's runtime-dynamic types (Runnable
+# composition, provider kwargs) would force casts that obscure more than they
+# check. This catches real mistakes without contorting the code.
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-q --tb=short"
+testpaths = ["tests"]
+asyncio_mode = "auto"

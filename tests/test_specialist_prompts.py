@@ -16,10 +16,10 @@ import pytest
 
 from agents.base import BaseAgent
 from agents.specialized import (
+    SPECIALIST_CLASSES,
     ACCAgent,
     MPFCAgent,
     OFCAgent,
-    SPECIALIST_CLASSES,
     VMPFCAgent,
 )
 

@@ -1,8 +1,10 @@
-import pytest
 import asyncio
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from agents.dlpfc import DLPFCAgent
-from typing import Dict, Any
+
 
 @pytest.fixture
 def mock_env_vars():
@@ -67,10 +69,10 @@ async def test_dlpfc_agent_process(dlpfc_agent, test_state):
     2. Analyze results
     3. Generate final output
     """
-    
+
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
-    
+
     result = await dlpfc_agent.process(test_state)
     assert isinstance(result, dict)
     assert "subtasks" in result
@@ -82,17 +84,14 @@ async def test_dlpfc_agent_error_handling(dlpfc_agent, test_state):
     """Test error handling in DLPFC agent"""
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=ValueError("Test error"))
-    
+
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
-    
+
     # Check response content
     response = result["response"]
-    if isinstance(response, dict):
-        response_text = response["content"]
-    else:
-        response_text = response
-        
+    response_text = response["content"] if isinstance(response, dict) else response
+
     assert "error" in response_text.lower()
 
 @pytest.mark.asyncio
@@ -103,7 +102,7 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
         return None
 
     dlpfc_agent.process = mock_process
-    
+
     with pytest.raises(asyncio.TimeoutError):
         async with asyncio.timeout(0.001):
             await dlpfc_agent.process(test_state)
@@ -241,13 +240,13 @@ async def test_malformed_llm_response(dlpfc_agent, test_state):
         No proper numbering or structure
         """
     ]
-    
+
     for response in malformed_responses:
         mock_response = AsyncMock()
         mock_response.content = response
         dlpfc_agent.llm = AsyncMock()
         dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
-        
+
         result = await dlpfc_agent.process(test_state)
         assert isinstance(result, dict)
         assert "subtasks" in result
@@ -274,17 +273,17 @@ async def test_complex_subtask_assignments(dlpfc_agent):
     2. Analyze dependencies
     3. Generate final report
     """
-    
+
     subtasks = dlpfc_agent._parse_subtasks(complex_response)
     assert isinstance(subtasks, list)
     assert len(subtasks) > 0
-    
+
     # Verify structure handling
     tasks = [task["task"] for task in subtasks]
     assert any("Main Task A" in task for task in tasks)
     assert any("Subtask A1" in task for task in tasks)
     assert any("Subtask B1" in task for task in tasks)
-    
+
     # Verify agent assignments
     agent_assignments = [task["agent"] for task in subtasks if task["agent"]]
     assert "VMPFC" in agent_assignments
@@ -307,7 +306,7 @@ async def test_invalid_feedback_history(dlpfc_agent):
         # Extra fields
         [{"stage": "stage1", "response": "resp1", "feedback": "feed1", "extra": "field"}]
     ]
-    
+
     for history in invalid_histories:
         formatted = dlpfc_agent._format_feedback_history(history)
         assert isinstance(formatted, str)
@@ -330,15 +329,15 @@ async def test_concurrent_subtask_processing(dlpfc_agent):
     
     All tasks can be processed concurrently.
     """
-    
+
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
-    
+
     result = await dlpfc_agent.process({"task": "concurrent test"})
     assert isinstance(result, dict)
     assert "subtasks" in result
     assert len(result["subtasks"]) == 3
-    
+
     # Verify each task has proper assignment
     agents = [task["agent"] for task in result["subtasks"] if task["agent"]]
     assert len(agents) == 3
@@ -377,7 +376,7 @@ async def test_response_formatting_edge_cases(dlpfc_agent):
         </ul>
         """
     ]
-    
+
     for response in edge_case_responses:
         formatted = dlpfc_agent._format_response(response)
         assert isinstance(formatted, dict)

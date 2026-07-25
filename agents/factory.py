@@ -1,6 +1,6 @@
-from typing import Dict, Any
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class LLMFactory:
     """
 
     @staticmethod
-    def wrap_with_retry(runnable: Any, config: Dict[str, Any]) -> Any:
+    def wrap_with_retry(runnable: Any, config: dict[str, Any]) -> Any:
         """Wrap a runnable in retry-with-exponential-backoff.
 
         `max_retries` is an OpenAI-only *constructor* argument -- neither
@@ -57,7 +57,7 @@ class LLMFactory:
             return runnable
 
     @staticmethod
-    def create_llm(config: Dict[str, Any]) -> Any:
+    def create_llm(config: dict[str, Any]) -> Any:
         """Create an LLM instance based on the provided configuration.
 
         Args:
@@ -84,13 +84,16 @@ class LLMFactory:
         if provider == "openai":
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
+            # The ignores below cover max_tokens/api_key: both are accepted at
+            # runtime (verified against the pinned langchain-openai); the
+            # published signature just does not reflect it.
+            return ChatOpenAI(  # type: ignore[call-arg]
                 model=model_name,
                 temperature=temperature,
-                api_key=config.get("api_key") or os.getenv("OPENAI_API_KEY"),
+                api_key=config.get("api_key") or os.getenv("OPENAI_API_KEY"),  # type: ignore[arg-type]
                 timeout=config.get("timeout", 30.0),
                 max_tokens=config.get("max_tokens"),
-                max_retries=config.get("max_retries", 3)
+                max_retries=config.get("max_retries", 3),
             )
 
         elif provider == "ollama":
@@ -100,12 +103,13 @@ class LLMFactory:
             # extra="ignore", so passing timeout= was silently dropped and local
             # runs had no client-side timeout at all. The underlying ollama
             # client takes it via client_kwargs.
-            kwargs = dict(
-                model=model_name,
-                temperature=temperature,
-                base_url=config.get("base_url", "http://localhost:11434"),
-                client_kwargs={"timeout": config.get("timeout", 120.0)}  # Local models might be slower
-            )
+            kwargs = {
+                "model": model_name,
+                "temperature": temperature,
+                "base_url": config.get("base_url", "http://localhost:11434"),
+                # Local models might be slower.
+                "client_kwargs": {"timeout": config.get("timeout", 120.0)},
+            }
 
             # num_ctx defaults to None, which means the Ollama server applies its
             # own default (commonly 2048 tokens) and silently DROPS anything past
@@ -120,10 +124,12 @@ class LLMFactory:
             return ChatOllama(**kwargs)
 
         elif provider == "huggingface":
-            from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+            from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
             # Use HuggingFaceEndpoint for inference API or local TGI
-            llm = HuggingFaceEndpoint(
+            # `model` is declared required but a validator populates it from
+            # repo_id; repo_id-only construction is verified to work.
+            llm = HuggingFaceEndpoint(  # type: ignore[call-arg]
                 repo_id=model_name,
                 temperature=temperature,
                 huggingfacehub_api_token=config.get("api_key") or os.getenv("HUGGINGFACEHUB_API_TOKEN"),

@@ -6,7 +6,7 @@ config the app had zero retry on any failure, and a one-second blip on a local
 server failed every stage of the run in turn.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

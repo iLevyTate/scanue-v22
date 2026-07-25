@@ -12,7 +12,6 @@ integration, synthesis, or its peers at all, even though it is the integration
 stage and up to 4000 characters of peer analysis are assembled for it.
 """
 
-from typing import Dict
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -143,7 +142,7 @@ OFCAgent = _build_agent("OFC", *SPECIALISTS["OFC"])
 ACCAgent = _build_agent("ACC", *SPECIALISTS["ACC"])
 MPFCAgent = _build_agent("MPFC", *SPECIALISTS["MPFC"])
 
-SPECIALIST_CLASSES: Dict[str, type] = {
+SPECIALIST_CLASSES: dict[str, type] = {
     "VMPFC": VMPFCAgent,
     "OFC": OFCAgent,
     "ACC": ACCAgent,

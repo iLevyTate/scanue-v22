@@ -1,14 +1,16 @@
-from abc import ABC, abstractmethod
-import logging
-import os
-from typing import Optional, Dict, Any
-from langchain_core.prompts import ChatPromptTemplate
-from dotenv import load_dotenv
 import asyncio
 import copy
+import logging
+import os
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from typing import Any
 
-from utils.config import ConfigLoader
+from dotenv import load_dotenv
+from langchain_core.prompts import ChatPromptTemplate
+
 from agents.factory import LLMFactory
+from utils.config import ConfigLoader
 
 # Load environment variables
 load_dotenv()
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 AGENT_LLM_TIMEOUT_SECONDS = 30.0
 
 
-def resolve_llm_timeout(config: Dict[str, Any]) -> float:
+def resolve_llm_timeout(config: dict[str, Any]) -> float:
     """Per-model inner timeout, from `timeout:` in config/agents.yaml.
 
     This constant used to be the hard cap regardless of configuration: a user
@@ -30,9 +32,9 @@ def resolve_llm_timeout(config: Dict[str, Any]) -> float:
     no way to change it short of editing source. The client-side timeout the
     factory passes was therefore dead for any value above 30.
     """
-    timeout = (config or {}).get("timeout")
+    raw = (config or {}).get("timeout")
     try:
-        timeout = float(timeout)
+        timeout = float(raw)  # type: ignore[arg-type]  # None/str handled below
     except (TypeError, ValueError):
         return AGENT_LLM_TIMEOUT_SECONDS
     return timeout if timeout > 0 else AGENT_LLM_TIMEOUT_SECONDS
@@ -92,7 +94,7 @@ def format_feedback_history(history: Any) -> str:
     return _clip("\n".join(formatted), FEEDBACK_CHAR_BUDGET)
 
 
-def extract_usage(response: Any) -> Dict[str, Any]:
+def extract_usage(response: Any) -> dict[str, Any]:
     """Pull token counts and the finish reason off a LangChain response.
 
     Every LLM response carries `usage_metadata` (input/output/total tokens) and
@@ -104,7 +106,7 @@ def extract_usage(response: Any) -> Dict[str, Any]:
     mid-generation, and a truncated answer was previously indistinguishable from
     a complete one.
     """
-    usage: Dict[str, Any] = {}
+    usage: dict[str, Any] = {}
 
     metadata = getattr(response, "usage_metadata", None) or {}
     if isinstance(metadata, dict):
@@ -135,7 +137,7 @@ def extract_usage(response: Any) -> Dict[str, Any]:
     return usage
 
 
-def state_text(state: Dict[str, Any], key: str, placeholder: str) -> str:
+def state_text(state: Mapping[str, Any], key: str, placeholder: str) -> str:
     """Read a text field, falling back to `placeholder` when it is blank.
 
     `state.get(key, placeholder)` was not enough: main.py seeds `feedback` and
@@ -150,7 +152,7 @@ def state_text(state: Dict[str, Any], key: str, placeholder: str) -> str:
     return text or placeholder
 
 
-def summarize_state(state: Dict[str, Any]) -> str:
+def summarize_state(state: Mapping[str, Any]) -> str:
     """Build a compact textual summary of the state for prompt injection.
 
     Injecting the full state dict into prompts bloats tokens and widens the
@@ -190,7 +192,7 @@ class BaseAgent(ABC):
     for consistent agent interaction patterns.
     """
 
-    def __init__(self, agent_name: str, model_env_key: Optional[str] = None):
+    def __init__(self, agent_name: str, model_env_key: str | None = None):
         """Initialize agent with models from configuration.
 
         Args:
@@ -201,7 +203,7 @@ class BaseAgent(ABC):
         self.models = {}
         # Resolved config for the primary model. Kept so the agent can derive its
         # timeout and retry policy instead of hardcoding them.
-        self.model_config: Dict[str, Any] = {}
+        self.model_config: dict[str, Any] = {}
 
         # Load agent configuration
         agent_config = ConfigLoader.get_agent_config(agent_name)
@@ -239,15 +241,17 @@ class BaseAgent(ABC):
             self.model_config = fallback_config
 
         # Set primary model as default self.llm for backward compatibility
-        self.llm = self.models.get("primary")
-        if not self.llm:
+        llm = self.models.get("primary")
+        if not llm:
             raise ValueError(f"Failed to initialize primary model for agent {agent_name}")
+        self.llm: Any = llm
 
         self.llm_timeout = resolve_llm_timeout(self.model_config)
         self.prompt = self._create_prompt()     # Agent-specific prompt template
-        self.last_raw_response = None           # Cache for debugging and logging
+        # Cache of the most recent call, for debugging and the session log.
+        self.last_raw_response: dict[str, Any] | None = None
 
-    def model_descriptor(self) -> Dict[str, Any]:
+    def model_descriptor(self) -> dict[str, Any]:
         """Which model/provider this agent resolved to.
 
         Recorded at stage START as well as on the response, because it used to
@@ -280,7 +284,7 @@ class BaseAgent(ABC):
         """
         pass
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: Mapping[str, Any]) -> dict[str, Any]:
         """Process the current workflow state through this agent's cognitive lens.
 
         This is a complete default implementation. It was previously decorated
@@ -303,7 +307,7 @@ class BaseAgent(ABC):
         try:
             result = await self._process_with_timeout(state)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error_msg = "Request timed out. Please try again."
             logger.warning("%s LLM call timed out after %ss", self.agent_name, AGENT_LLM_TIMEOUT_SECONDS)
             return {
@@ -322,7 +326,7 @@ class BaseAgent(ABC):
                 "error": True
             }
 
-    async def _process_with_timeout(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_with_timeout(self, state: Mapping[str, Any]) -> dict[str, Any]:
         """Process with timeout handling."""
         try:
             # Format prompt messages. Only a compact state summary is injected to
@@ -374,7 +378,7 @@ class BaseAgent(ABC):
             formatted_result["raw_llm_response"] = copy.deepcopy(self.last_raw_response)
 
             return formatted_result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("API request timed out")
             raise
 
@@ -392,7 +396,7 @@ class BaseAgent(ABC):
             # Fallback if serialization fails
             return str(messages)
 
-    def _format_response(self, response: str) -> Dict[str, Any]:
+    def _format_response(self, response: str) -> dict[str, Any]:
         """Format the response from the LLM."""
         # Format response in the required JSON structure
         structured_response = {

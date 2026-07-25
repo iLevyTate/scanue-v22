@@ -8,8 +8,8 @@ the repo-root `feedback_history.json`.
 import pytest
 
 import main
-from workflow import process_hitl_feedback
 from main import load_feedback_history, save_feedback_history
+from workflow import process_hitl_feedback
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_feedback_processing():
 def test_agent_prompt_integration(mock_env_vars):
     """DLPFC formats feedback history and specialists include it in their prompts."""
     from agents.dlpfc import DLPFCAgent
-    from agents.specialized import VMPFCAgent, ACCAgent, MPFCAgent
+    from agents.specialized import ACCAgent, MPFCAgent, VMPFCAgent
 
     test_feedback_history = [
         {
@@ -93,7 +93,7 @@ def test_agent_prompt_integration(mock_env_vars):
 @pytest.fixture
 def mock_env_vars():
     """Provide a consistent OpenAI test configuration for agent construction."""
-    from unittest.mock import patch, AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     test_config = {
         "agents": {

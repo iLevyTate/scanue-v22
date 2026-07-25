@@ -5,8 +5,7 @@ Because every node appends itself to `completed_stages` on success AND failure,
 this loop always advances -- these tests lock in that termination guarantee.
 """
 
-from workflow import get_next_stage, END
-
+from workflow import END, get_next_stage
 
 DELEGATED = ["emotional_regulation", "conflict_detection", "value_assessment"]
 

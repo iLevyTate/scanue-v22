@@ -1,11 +1,15 @@
-from typing import Dict, Any, List, Optional
 import asyncio
 import copy
 import inspect
 import logging
+from collections.abc import Mapping
+from typing import Any
+
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+
 from agents.factory import LLMFactory
+
 from .base import (
     BaseAgent,
     extract_usage,
@@ -42,12 +46,12 @@ class AgentDelegation(BaseModel):
         default="",
         description="One or two sentences explaining why these specialists were chosen",
     )
-    subtasks: List[str] = Field(
+    subtasks: list[str] = Field(
         default_factory=list,
         description="Concrete subtasks the specialists should address",
     )
 
-    def to_stages(self) -> List[str]:
+    def to_stages(self) -> list[str]:
         """Map the decision onto router stage names, MPFC always last."""
         stages = []
         if self.vmpfc:
@@ -68,8 +72,8 @@ class DLPFCAgent(BaseAgent):
         # Per-call observability. The structured attempt costs tokens even when
         # it fails validation and we fall through to the free-text call, so both
         # the prompt and the attempt count are recorded for the session log.
-        self._delegation_messages_cache = None
-        self._last_usage: Dict[str, Any] = {}
+        self._delegation_messages_cache: list[Any] | None = None
+        self._last_usage: dict[str, Any] = {}
         self._structured_attempts = 0
 
     def _create_prompt(self) -> ChatPromptTemplate:
@@ -144,7 +148,7 @@ class DLPFCAgent(BaseAgent):
         """
         return ChatPromptTemplate.from_template(template)
 
-    def _delegation_messages(self, state: Dict[str, Any]):
+    def _delegation_messages(self, state: Mapping[str, Any]):
         return self._create_delegation_prompt().format_messages(
             task=state.get("task", ""),
             state=summarize_state(state),
@@ -153,7 +157,7 @@ class DLPFCAgent(BaseAgent):
             feedback_history=self._format_feedback_history(state.get("feedback_history", [])),
         )
 
-    async def _delegate_structured(self, state: Dict[str, Any]) -> Optional[AgentDelegation]:
+    async def _delegate_structured(self, state: Mapping[str, Any]) -> AgentDelegation | None:
         """Ask for a schema-validated delegation decision.
 
         Returns None -- so the caller falls back to the free-text path -- when
@@ -174,7 +178,10 @@ class DLPFCAgent(BaseAgent):
         # with_structured_output is sync by contract and returns a Runnable.
         # Anything else means this model cannot be driven this way.
         if inspect.isawaitable(structured_llm):
-            structured_llm.close()  # otherwise it leaks a "never awaited" warning
+            # Close it, or it leaks a "coroutine was never awaited" warning.
+            close = getattr(structured_llm, "close", None)
+            if close:
+                close()
             return None
         if not hasattr(structured_llm, "ainvoke"):
             logger.warning("Structured output for DLPFC is not runnable; using text parsing")
@@ -191,7 +198,7 @@ class DLPFCAgent(BaseAgent):
                 LLMFactory.wrap_with_retry(structured_llm, self.model_config).ainvoke(messages),
                 timeout=self.llm_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as e:
             logger.warning("Structured delegation call failed (%s); using text parsing", e)
@@ -204,7 +211,7 @@ class DLPFCAgent(BaseAgent):
 
         return result
 
-    def _result_from_delegation(self, delegation: AgentDelegation) -> Dict[str, Any]:
+    def _result_from_delegation(self, delegation: AgentDelegation) -> dict[str, Any]:
         """Build the standard agent result from a validated delegation."""
         selected = [
             name for name, on in
@@ -243,7 +250,7 @@ class DLPFCAgent(BaseAgent):
             "raw_llm_response": copy.deepcopy(self.last_raw_response),
         }
 
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, state: Mapping[str, Any]) -> dict[str, Any]:
         try:
             # Log the compact summary rather than the whole state dict: the raw
             # state carries the full session log and feedback history, which is
@@ -305,7 +312,7 @@ class DLPFCAgent(BaseAgent):
             logger.debug("Updated state: %s", updated_state)
             return updated_state
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Same wording BaseAgent uses, so callers see one timeout message.
             error_msg = "Request timed out. Please try again."
             logger.warning("DLPFC LLM call timed out after %ss", self.llm_timeout)
@@ -323,7 +330,7 @@ class DLPFCAgent(BaseAgent):
                 "error": True,
             }
 
-    def _parse_subtasks(self, response: str) -> List[Dict[str, Any]]:
+    def _parse_subtasks(self, response: str) -> list[dict[str, Any]]:
         """Parse the response to extract subtasks and their assignments."""
         logger.debug("Parsing subtasks from response: %s", response)
 
@@ -371,7 +378,10 @@ class DLPFCAgent(BaseAgent):
                         task_parts = task_text.split(" - Assign to ")
                         task_text = task_parts[0].strip()
                         agent = task_parts[1].strip()
-                    elif ":" in task_text and any(brain_agent in task_text.split(":")[0].upper() for brain_agent in brain_region_agents):
+                    elif ":" in task_text and any(
+                        brain_agent in task_text.split(":")[0].upper()
+                        for brain_agent in brain_region_agents
+                    ):
                         # Handle format like "VMPFC: task description"
                         agent_part = task_text.split(":")[0].strip().upper()
                         task_text = ":".join(task_text.split(":")[1:]).strip()
@@ -408,7 +418,11 @@ class DLPFCAgent(BaseAgent):
                         current_subtask["agent"] = "MPFC Agent"
 
             # Filter out any empty or invalid tasks
-            subtasks = [task for task in subtasks if task["task"] and not task["task"].lower().startswith(('list', 'agent', 'integration'))]
+            subtasks = [
+                task for task in subtasks
+                if task["task"]
+                and not task["task"].lower().startswith(('list', 'agent', 'integration'))
+            ]
 
             logger.debug("Parsed %d tasks", len(subtasks))
             for task in subtasks:
@@ -422,13 +436,12 @@ class DLPFCAgent(BaseAgent):
             logger.exception("Error parsing subtasks: %s", e)
             return [{"task": "Error parsing subtasks", "agent": "MPFC Agent", "category": "error"}]
 
-    def _format_response(self, response: str) -> Dict[str, Any]:
+    def _format_response(self, response: str) -> dict[str, Any]:
         """Format the response from the LLM into a structured output."""
-        sections = {
+        sections: dict[str, list[str]] = {
             "subtasks": [],
             "assignments": [],
             "integration": [],
-            "error": False
         }
 
         try:
@@ -457,9 +470,8 @@ class DLPFCAgent(BaseAgent):
                     # "• Analysis:**" under the previous section's heading.
                     current_section = None
                 # Add content to appropriate section
-                elif line[0].isdigit() or line[0] in ['-', '*', '•']:
-                    if current_section:
-                        sections[current_section].append(line.lstrip('0123456789.-*• ').strip())
+                elif (line[0].isdigit() or line[0] in ['-', '*', '•']) and current_section:
+                    sections[current_section].append(line.lstrip('0123456789.-*• ').strip())
 
             # Format the response in a more readable way
             formatted_response = []
@@ -504,7 +516,7 @@ class DLPFCAgent(BaseAgent):
                 "error": True
             }
 
-    def _format_feedback_history(self, history: List[Dict[str, str]]) -> str:
+    def _format_feedback_history(self, history: list[dict[str, str]]) -> str:
         """Format feedback history for HITL integration into agent prompts.
 
         This method processes the persistent feedback history to provide context

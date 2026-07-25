@@ -1,5 +1,18 @@
+# Working agent configuration (this is the file the app reads).
+# See config/agents.example.yaml for every supported option and a multi-provider
+# example, and docs/local_models.md for guidance.
+#
+# num_ctx is set explicitly per model. Left unset, the Ollama server applies its
+# own default (commonly 2048 tokens) and silently DROPS anything past it -- no
+# error, no log line, just a truncated prompt. Values below match each model's
+# real capability; raise them if you switch to a larger model.
+
 agents:
   # Dorsolateral Prefrontal Cortex - Executive Function & Planning
+  #
+  # DLPFC decides which specialists run, so routing quality tracks this model's
+  # capability more than any other. Check `delegation_source` in logs/ to see
+  # whether it honors the delegation schema or falls back to text parsing.
   DLPFC:
     description: "Central controller responsible for task breakdown, delegation, and strategy"
     models:
@@ -8,6 +21,8 @@ agents:
         name: "llama3.2:latest"
         temperature: 0.1
         base_url: "http://localhost:11434"
+        num_ctx: 8192
+        timeout: 120
 
   # Ventromedial Prefrontal Cortex - Emotional Regulation & Risk
   VMPFC:
@@ -18,6 +33,8 @@ agents:
         name: "llama3.2:3b"
         temperature: 0.7 # Higher temperature for emotional nuance
         base_url: "http://localhost:11434"
+        num_ctx: 8192
+        timeout: 120
 
   # Orbitofrontal Cortex - Reward Processing
   OFC:
@@ -28,8 +45,15 @@ agents:
         name: "llama3.2:latest"
         temperature: 0.2
         base_url: "http://localhost:11434"
+        num_ctx: 8192
+        timeout: 120
 
   # Anterior Cingulate Cortex - Conflict Detection
+  #
+  # NOTE: tinyllama:1.1b is the smallest model here by a wide margin, and its
+  # context window is 2048 tokens -- so this agent is the first to truncate as
+  # feedback history accumulates. Its output also feeds MPFC's synthesis.
+  # Consider moving it to llama3.2 if conflict detection looks weak.
   ACC:
     description: "Monitors for conflicts, errors, and discrepancies"
     models:
@@ -38,8 +62,12 @@ agents:
         name: "tinyllama:1.1b"
         temperature: 0.0 # Strict logic for error detection
         base_url: "http://localhost:11434"
+        num_ctx: 2048 # tinyllama's actual limit
+        timeout: 120
 
   # Medial Prefrontal Cortex - Integration & Value Assessment
+  #
+  # Receives every other agent's analysis, so its prompt is the largest.
   MPFC:
     description: "Integrates all inputs for final value-based decision making"
     models:
@@ -48,3 +76,5 @@ agents:
         name: "llama3.2:latest"
         temperature: 0.4
         base_url: "http://localhost:11434"
+        num_ctx: 8192
+        timeout: 120

@@ -6,8 +6,8 @@ must NOT pull in OFC/reward_processing.
 """
 
 import pytest
-from workflow import parse_agent_assignments
 
+from workflow import parse_agent_assignments
 
 # The exact DLPFC response captured from an original run. It explicitly names
 # VMPFC, ACC and MPFC -- and NOT OFC.

@@ -4,8 +4,9 @@ Focus on shapes that hand-edited YAML actually produces -- in particular a key
 that is present but null, which is what commenting out a block leaves behind.
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from utils.config import ConfigLoader
 
