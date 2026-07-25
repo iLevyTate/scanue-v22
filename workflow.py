@@ -72,7 +72,12 @@ STAGE_AGENTS = {
 }
 
 
-def log_stage_start(state: Dict[str, Any], stage_name: str, agent_name: str) -> Dict:
+def log_stage_start(
+    state: Dict[str, Any],
+    stage_name: str,
+    agent_name: str,
+    model: Dict[str, Any] = None,
+) -> Dict:
     """Log the start of a processing stage."""
     if "session_log" not in state:
         return None
@@ -80,6 +85,10 @@ def log_stage_start(state: Dict[str, Any], stage_name: str, agent_name: str) -> 
     stage_log = {
         "stage": stage_name,
         "agent": agent_name,
+        # Stamped here, not just on the response: raw_llm_response is null on
+        # failure, so the log could not say which model had failed.
+        "model": (model or {}).get("model"),
+        "provider": (model or {}).get("provider"),
         "start_time": datetime.now().isoformat(),
         "input": {
             "task": state.get("task", ""),
@@ -334,7 +343,7 @@ async def process_task_delegation(state: Dict[str, Any]) -> Dict[str, Any]:
     dlpfc = DLPFCAgent()
 
     # Start logging for this stage
-    stage_log = log_stage_start(state, "task_delegation", "DLPFC")
+    stage_log = log_stage_start(state, "task_delegation", "DLPFC", dlpfc.model_descriptor())
 
     agent_errors = dict(state.get("agent_errors") or {})
     completed_stages = list(state.get("completed_stages") or [])
@@ -507,7 +516,7 @@ async def _run_specialist_stage(state: Dict[str, Any], stage_name: str, *, prepa
     agent_name, agent_class = STAGE_AGENTS[stage_name]
     agent = agent_class()
 
-    stage_log = log_stage_start(state, stage_name, agent_name)
+    stage_log = log_stage_start(state, stage_name, agent_name, agent.model_descriptor())
 
     agent_responses = dict(state.get("agent_responses") or {})
     agent_errors = dict(state.get("agent_errors") or {})

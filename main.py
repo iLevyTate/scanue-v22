@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 import json
 import uuid
 from datetime import datetime
@@ -101,6 +102,37 @@ def save_feedback_history(feedback_history):
     except Exception as e:
         logger.warning("Could not save feedback history: %s", e)
         print(f"Warning: Could not save feedback history: {str(e)}")
+
+def summarize_run(session_log: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregate per-stage timing and token usage into run totals.
+
+    Only per-stage `duration_ms` existed, and nothing at all recorded tokens --
+    so there was no way to see what a run cost or where its time went.
+    """
+    stages = session_log.get("stages") or []
+
+    totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    stage_ms = 0
+    truncated = []
+
+    for stage in stages:
+        stage_ms += stage.get("duration_ms") or 0
+        usage = ((stage.get("raw_llm_response") or {}).get("usage")) or {}
+        for key in totals:
+            totals[key] += usage.get(key) or 0
+        if usage.get("finish_reason") == "length":
+            truncated.append(stage.get("stage"))
+
+    summary = {
+        "stages_run": len(stages),
+        "stage_duration_ms": stage_ms,
+        "tokens": totals,
+    }
+    if truncated:
+        # A response cut off mid-generation reads exactly like a complete one.
+        summary["truncated_stages"] = truncated
+    return summary
+
 
 def _prune_old_logs() -> None:
     """Keep only the most recent LOG_RETENTION_COUNT session logs.
@@ -268,7 +300,10 @@ async def main(args=None):
                 
             print("\n🧠 Starting cognitive processing pipeline...\n")
             
-            # Create session log
+            # Create session log. perf_counter, not wall clock: immune to
+            # clock adjustment, and it covers agent construction too, which the
+            # per-stage durations exclude.
+            run_started = time.perf_counter()
             session_log = create_session_log(task)
             
             # WORKFLOW STATE INITIALIZATION: Include HITL context and session tracking
@@ -304,6 +339,9 @@ async def main(args=None):
                 session_log["agent_errors"] = agent_errors
                 session_log["degraded"] = bool(agent_errors)
 
+                session_log["summary"] = summarize_run(session_log)
+                session_log["wall_clock_ms"] = int((time.perf_counter() - run_started) * 1000)
+
                 if result.get("error"):
                     error_content = _response_content(result.get("response"))
                     session_log["error"] = error_content
@@ -331,6 +369,20 @@ async def main(args=None):
                 # Say so when the answer was produced without some specialists.
                 # Silently returning a partial analysis as if it were complete is
                 # the most misleading thing this CLI can do.
+                summary = session_log["summary"]
+                tokens = summary["tokens"]["total_tokens"]
+                print(
+                    f"\n⏱️  {session_log['wall_clock_ms'] / 1000:.1f}s"
+                    f" · {summary['stages_run']} stages"
+                    + (f" · {tokens:,} tokens" if tokens else "")
+                )
+                if summary.get("truncated_stages"):
+                    print(
+                        "⚠️  Output token limit reached in: "
+                        + ", ".join(summary["truncated_stages"])
+                        + " (response cut off mid-generation)"
+                    )
+
                 if agent_errors:
                     failed = ", ".join(sorted(agent_errors))
                     print(

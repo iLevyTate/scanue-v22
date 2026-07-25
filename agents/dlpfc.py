@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from agents.factory import LLMFactory
 from .base import (
     BaseAgent,
+    extract_usage,
     format_feedback_history,
     state_text,
     summarize_state,
@@ -64,6 +65,12 @@ class DLPFCAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(agent_name="DLPFC", model_env_key="DLPFC_MODEL")
+        # Per-call observability. The structured attempt costs tokens even when
+        # it fails validation and we fall through to the free-text call, so both
+        # the prompt and the attempt count are recorded for the session log.
+        self._delegation_messages_cache = None
+        self._last_usage: Dict[str, Any] = {}
+        self._structured_attempts = 0
 
     def _create_prompt(self) -> ChatPromptTemplate:
         template = """You are the Dorsolateral Prefrontal Cortex (DLPFC) Agent, responsible for:
@@ -154,6 +161,10 @@ class DLPFCAgent(BaseAgent):
         fails validation. A timeout is NOT swallowed: it propagates so we do not
         spend a second LLM call and blow the outer node timeout.
         """
+        # Reset per-call observability state.
+        self._delegation_messages_cache = None
+        self._last_usage = {}
+
         try:
             structured_llm = self.llm.with_structured_output(AgentDelegation)
         except Exception as e:
@@ -169,10 +180,15 @@ class DLPFCAgent(BaseAgent):
             logger.warning("Structured output for DLPFC is not runnable; using text parsing")
             return None
 
+        messages = self._delegation_messages(state)
+        self._delegation_messages_cache = messages
+        # This call bills tokens whether or not it validates. Count it so the
+        # fallback's spend is attributable rather than invisible.
+        self._structured_attempts += 1
+
         try:
             result = await asyncio.wait_for(
-                LLMFactory.wrap_with_retry(structured_llm, self.model_config)
-                    .ainvoke(self._delegation_messages(state)),
+                LLMFactory.wrap_with_retry(structured_llm, self.model_config).ainvoke(messages),
                 timeout=self.llm_timeout,
             )
         except asyncio.TimeoutError:
@@ -205,10 +221,12 @@ class DLPFCAgent(BaseAgent):
         if delegation.reasoning:
             parts.append(f"\n🧭 Reasoning:\n  {delegation.reasoning}")
 
-        model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown"))
         self.last_raw_response = {
-            "model": model_name,
+            **self.model_descriptor(),
+            "prompt": self._serialize_messages(self._delegation_messages_cache or []),
             "response": delegation.model_dump_json(indent=2),
+            "usage": self._last_usage,
+            "path": "structured_output",
         }
 
         return {
@@ -246,26 +264,30 @@ class DLPFCAgent(BaseAgent):
             # used to bypass AGENT_LLM_TIMEOUT_SECONDS entirely, leaving the
             # "inner timeout fires before the outer node timeout" invariant
             # (asserted by two tests) vacuous for the one agent that always runs.
+            messages = self.prompt.format_messages(
+                task=state.get("task", ""),
+                state=summarize_state(state),
+                previous_response=state_text(state, "previous_response", "No previous response"),
+                feedback=state_text(state, "feedback", "No feedback provided"),
+                feedback_history=self._format_feedback_history(state.get("feedback_history", []))
+            )
             response = await asyncio.wait_for(
-                self.invoker().ainvoke(
-                    self.prompt.format_messages(
-                        task=state.get("task", ""),
-                        state=summarize_state(state),
-                        previous_response=state_text(state, "previous_response", "No previous response"),
-                        feedback=state_text(state, "feedback", "No feedback provided"),
-                        feedback_history=self._format_feedback_history(state.get("feedback_history", []))
-                    )
-                ),
+                self.invoker().ainvoke(messages),
                 timeout=self.llm_timeout,
             )
 
             logger.debug("DLPFC Agent received response: %s", response)
 
             # Cache the raw response for logging/debugging (mirrors BaseAgent).
-            model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown"))
             self.last_raw_response = {
-                "model": model_name,
+                **self.model_descriptor(),
+                "prompt": self._serialize_messages(messages),
                 "response": response.content,
+                "usage": extract_usage(response),
+                "path": "free_text",
+                # A failed structured attempt still cost tokens; record it so
+                # the fallback's spend is not invisible.
+                "structured_attempts": self._structured_attempts,
             }
 
             # Parse response and update state

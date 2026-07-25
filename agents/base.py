@@ -92,6 +92,49 @@ def format_feedback_history(history: Any) -> str:
     return _clip("\n".join(formatted), FEEDBACK_CHAR_BUDGET)
 
 
+def extract_usage(response: Any) -> Dict[str, Any]:
+    """Pull token counts and the finish reason off a LangChain response.
+
+    Every LLM response carries `usage_metadata` (input/output/total tokens) and
+    `response_metadata` (for Ollama: eval_count, prompt_eval_count, done_reason;
+    for OpenAI: model_name, finish_reason). All of it was discarded, so the app
+    had no notion of spend at all.
+
+    The finish reason matters beyond cost: "length" means the answer was cut off
+    mid-generation, and a truncated answer was previously indistinguishable from
+    a complete one.
+    """
+    usage: Dict[str, Any] = {}
+
+    metadata = getattr(response, "usage_metadata", None) or {}
+    if isinstance(metadata, dict):
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            if metadata.get(key) is not None:
+                usage[key] = metadata[key]
+
+    response_metadata = getattr(response, "response_metadata", None) or {}
+    if isinstance(response_metadata, dict):
+        # OpenAI calls it finish_reason; Ollama calls it done_reason.
+        finish = response_metadata.get("finish_reason") or response_metadata.get("done_reason")
+        if finish:
+            usage["finish_reason"] = finish
+            if finish == "length":
+                logger.warning(
+                    "Response hit the output token limit and was truncated "
+                    "mid-generation (finish_reason=length)"
+                )
+        # Ollama reports token counts here rather than in usage_metadata.
+        if "prompt_eval_count" in response_metadata and "input_tokens" not in usage:
+            usage["input_tokens"] = response_metadata["prompt_eval_count"]
+        if "eval_count" in response_metadata and "output_tokens" not in usage:
+            usage["output_tokens"] = response_metadata["eval_count"]
+
+    if "total_tokens" not in usage and {"input_tokens", "output_tokens"} <= usage.keys():
+        usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
+
+    return usage
+
+
 def state_text(state: Dict[str, Any], key: str, placeholder: str) -> str:
     """Read a text field, falling back to `placeholder` when it is blank.
 
@@ -204,6 +247,18 @@ class BaseAgent(ABC):
         self.prompt = self._create_prompt()     # Agent-specific prompt template
         self.last_raw_response = None           # Cache for debugging and logging
 
+    def model_descriptor(self) -> Dict[str, Any]:
+        """Which model/provider this agent resolved to.
+
+        Recorded at stage START as well as on the response, because it used to
+        live only inside raw_llm_response -- which is null on failure, so the log
+        could not say which model had failed, the one thing you most want to know.
+        """
+        return {
+            "model": getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown")),
+            "provider": (self.model_config or {}).get("provider", "openai"),
+        }
+
     def invoker(self):
         """The primary model wrapped in the configured retry policy.
 
@@ -291,17 +346,19 @@ class BaseAgent(ABC):
             )
 
             # Store the complete raw response for logging
-            # Handle different model attributes safely
-            model_name = getattr(self.llm, "model_name", getattr(self.llm, "model", "unknown"))
-
             self.last_raw_response = {
-                "model": model_name,
+                **self.model_descriptor(),
                 "prompt": self._serialize_messages(formatted_messages),
+                "prompt_chars": prompt_chars,
                 "response": response.content,
+                "usage": extract_usage(response),
                 "metadata": {
                     "temperature": getattr(self.llm, "temperature", None),
-                    # max_tokens might not exist on all model types
-                    "max_tokens": getattr(self.llm, "max_tokens", None),
+                    # max_tokens might not exist on all model types; Ollama's
+                    # equivalent is num_predict.
+                    "max_tokens": getattr(self.llm, "max_tokens", None)
+                    or getattr(self.llm, "num_predict", None),
+                    "num_ctx": getattr(self.llm, "num_ctx", None),
                 }
             }
 
