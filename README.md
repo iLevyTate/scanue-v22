@@ -1,6 +1,6 @@
 # **SCANUE-V22**
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18023657.svg)](https://doi.org/10.5281/zenodo.18023657)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14510406.svg)](https://doi.org/10.5281/zenodo.14510406)
 
 <img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/7b4ec095-8238-4b62-9dcb-1531dff5c8a9" />
 
