@@ -1,23 +1,54 @@
+# Example agent configuration.
+#
+# This file is a REFERENCE showing every supported option and a mix of
+# providers. The file the app actually reads is config/agents.yaml -- copy this
+# over it, or edit that one directly.
+#
+# Supported per-model options:
+#   provider     openai | ollama | huggingface        (default: openai)
+#   name         model identifier                     (required)
+#   temperature  0.0 - 1.0                            (default: 0.7)
+#   base_url     ollama only                          (default: http://localhost:11434)
+#   api_key      overrides the provider's env var     (optional)
+#   timeout      seconds for one LLM call             (default: 30)
+#   max_retries  retries after the first attempt      (default: 3, 0 disables)
+#   num_ctx      ollama only: context window in tokens
+#   max_tokens   cap on output length (ollama: num_predict)
+
 agents:
   # Dorsolateral Prefrontal Cortex - Executive Function & Planning
+  #
+  # DLPFC decides which specialists run, so it benefits most from your
+  # strongest model. It is also the one asked for schema-constrained output;
+  # small models are likelier to fall back to text parsing. Check
+  # `delegation_source` in logs/ to see which path your model actually takes.
   DLPFC:
     description: "Central controller responsible for task breakdown, delegation, and strategy"
     models:
       primary:
-        provider: "ollama"
-        name: "llama3.2:latest"
+        provider: "openai"
+        name: "gpt-4o-mini"
         temperature: 0.1
-        base_url: "http://localhost:11434"
+        timeout: 30
+        max_retries: 3
 
   # Ventromedial Prefrontal Cortex - Emotional Regulation & Risk
+  # A local model, showing the Ollama options.
   VMPFC:
     description: "Evaluates emotional significance, social context, and risk"
     models:
       primary:
         provider: "ollama"
-        name: "llama3.2:3b"
+        name: "llama3.2:latest"
         temperature: 0.7 # Higher temperature for emotional nuance
         base_url: "http://localhost:11434"
+        # Worth setting explicitly: left unset, the Ollama server applies its
+        # own default (commonly 2048) and silently DROPS anything past it --
+        # no error, no log line, just a truncated prompt.
+        num_ctx: 8192
+        max_tokens: 1024
+        timeout: 120 # Local models can be slow on CPU
+        max_retries: 3
 
   # Orbitofrontal Cortex - Reward Processing
   OFC:
@@ -27,7 +58,7 @@ agents:
         provider: "ollama"
         name: "llama3.2:latest"
         temperature: 0.2
-        base_url: "http://localhost:11434"
+        num_ctx: 8192
 
   # Anterior Cingulate Cortex - Conflict Detection
   ACC:
@@ -35,16 +66,19 @@ agents:
     models:
       primary:
         provider: "ollama"
-        name: "tinyllama:1.1b"
+        name: "llama3.2:latest"
         temperature: 0.0 # Strict logic for error detection
-        base_url: "http://localhost:11434"
+        num_ctx: 8192
 
   # Medial Prefrontal Cortex - Integration & Value Assessment
+  #
+  # MPFC receives every other agent's analysis, so its prompt is the largest.
+  # Give it the most context room.
   MPFC:
     description: "Integrates all inputs for final value-based decision making"
     models:
       primary:
-        provider: "ollama"
-        name: "llama3.2:latest"
+        provider: "huggingface"
+        name: "mistralai/Mistral-7B-Instruct-v0.2"
         temperature: 0.4
-        base_url: "http://localhost:11434"
+        timeout: 120

@@ -1,10 +1,13 @@
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-from agents.base import BaseAgent, AGENT_LLM_TIMEOUT_SECONDS
-from workflow import NODE_TIMEOUT_SECONDS
-from langchain_core.prompts import ChatPromptTemplate
-from typing import Dict, Any
 import asyncio
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from langchain_core.prompts import ChatPromptTemplate
+
+from agents.base import AGENT_LLM_TIMEOUT_SECONDS, BaseAgent, state_text, summarize_state
+from workflow import NODE_TIMEOUT_SECONDS
+
 
 class TestAgent(BaseAgent):
     """Test implementation of BaseAgent"""
@@ -12,11 +15,11 @@ class TestAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(agent_name="TEST", model_env_key="TEST_MODEL")
-        
+
     def _create_prompt(self) -> ChatPromptTemplate:
         return ChatPromptTemplate.from_template("Test prompt: {task}")
-        
-    async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def process(self, state: dict[str, Any]) -> dict[str, Any]:
         return await super().process(state)
 
 @pytest.fixture
@@ -84,7 +87,7 @@ async def test_base_agent_timeout(test_agent, test_state):
         return None
 
     test_agent.process = mock_process
-    
+
     with pytest.raises(asyncio.TimeoutError):
         async with asyncio.timeout(0.001):
             await test_agent.process(test_state)
@@ -106,6 +109,82 @@ async def test_base_agent_cancellation_propagates(test_agent, test_state):
     with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.CancelledError()):
         with pytest.raises(asyncio.CancelledError):
             await test_agent.process(test_state)
+
+
+@pytest.mark.asyncio
+async def test_feedback_history_is_rendered_as_text_not_a_repr(mock_env_vars):
+    """C11: BaseAgent passed the raw list into the template, so the prompt got a
+    Python repr (`[{'response': ...}]`). Only DLPFC formatted it properly."""
+    class HistoryAgent(TestAgent):
+        def _create_prompt(self):
+            return ChatPromptTemplate.from_template("History:\n{feedback_history}")
+
+    agent = HistoryAgent()
+    state = {
+        "task": "t",
+        "feedback_history": [
+            {"stage": "value_assessment", "response": "prior answer", "feedback": "be specific"}
+        ],
+    }
+
+    mock_response = AsyncMock()
+    mock_response.content = "ok"
+    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
+        await agent.process(state)
+
+    prompt_text = "\n".join(m["content"] for m in agent.last_raw_response["prompt"])
+    assert "Stage: value_assessment" in prompt_text
+    assert "Feedback: be specific" in prompt_text
+    assert "{'response'" not in prompt_text  # no Python repr leaked into the prompt
+
+
+@pytest.mark.asyncio
+async def test_empty_feedback_history_renders_placeholder(mock_env_vars):
+    class HistoryAgent(TestAgent):
+        def _create_prompt(self):
+            return ChatPromptTemplate.from_template("History:\n{feedback_history}")
+
+    agent = HistoryAgent()
+    mock_response = AsyncMock()
+    mock_response.content = "ok"
+    with patch("langchain_openai.ChatOpenAI.ainvoke", new=AsyncMock(return_value=mock_response)):
+        await agent.process({"task": "t", "feedback_history": []})
+
+    prompt_text = "\n".join(m["content"] for m in agent.last_raw_response["prompt"])
+    assert "No previous feedback" in prompt_text
+
+
+def test_blank_fields_render_their_placeholder():
+    """main.py seeds `feedback`/`previous_response` as empty strings, so the key
+    is always PRESENT and `state.get(key, default)` could never fire -- prompts
+    rendered a bare "Feedback:" line instead of the sentinel."""
+    state = {"feedback": "", "previous_response": "   "}
+
+    assert state_text(state, "feedback", "No feedback provided") == "No feedback provided"
+    assert state_text(state, "previous_response", "No previous response") == "No previous response"
+    assert state_text({}, "feedback", "No feedback provided") == "No feedback provided"
+    assert state_text({"feedback": "real"}, "feedback", "placeholder") == "real"
+
+
+def test_summarize_state_does_not_duplicate_the_task():
+    """Every template has its own {task} slot, so including it here rendered the
+    task twice in every prompt."""
+    assert "Should I take the job?" not in summarize_state({"task": "Should I take the job?"})
+
+
+def test_summarize_state_label_is_not_doubled():
+    """Rendered as "previous_agent_insights: \\n\\nPrevious Agent Insights:"."""
+    summary = summarize_state({"previous_agent_insights": "\nVMPFC Agent: analysis.\n"})
+
+    assert "previous_agent_insights:" not in summary
+    assert summary.count("Agent") >= 1
+    assert "VMPFC Agent: analysis." in summary
+
+
+def test_summarize_state_names_unavailable_agents():
+    summary = summarize_state({"unavailable_agents": ["ACC", "VMPFC"]})
+    assert "ACC, VMPFC" in summary
+    assert "failed" in summary.lower()
 
 
 def test_outer_node_timeout_exceeds_inner_llm_timeout():

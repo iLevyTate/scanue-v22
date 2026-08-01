@@ -1,6 +1,11 @@
+import json
+import pathlib
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 from langgraph.errors import GraphRecursionError
+
+import main as main_mod
 from main import main
 
 
@@ -25,16 +30,113 @@ def mock_workflow():
     return workflow
 
 
-MOCK_SESSION = {
-    "task": "test task",
-    "timestamp": "2023-01-01T00:00:00.000000",
-    "session_id": "test-session-id",
-    "stages": [],
-    "final_response": None,
-    "user_feedback": None,
-    "error": None,
-    "completed": False,
-}
+def _mock_session():
+    """Build a fresh session log.
+
+    `main()` mutates the session log it is given (`completed`, `final_response`,
+    `error`), so a module-level dict leaked state between tests and made
+    assert_called_with compare the mutated object against itself.
+    """
+    return {
+        "task": "test task",
+        "timestamp": "2023-01-01T00:00:00.000000",
+        "session_id": "test-session-id",
+        "stages": [],
+        "final_response": None,
+        "user_feedback": None,
+        "error": None,
+        "completed": False,
+    }
+
+
+@pytest.fixture
+def mock_session():
+    return _mock_session()
+
+
+def test_session_log_survives_unserializable_values(tmp_path, monkeypatch):
+    """A value json can't encode used to truncate the log file mid-write.
+
+    json.dump() streams to the file handle, so it raised partway through and
+    left an unparseable file behind while save_session_log swallowed the error
+    and reported failure -- losing the whole run's diagnostics.
+    """
+    monkeypatch.setattr(main_mod, "LOGS_DIRECTORY", str(tmp_path / "logs"))
+
+    log = _mock_session()
+    log["stages"] = [{"stage": "task_delegation", "raw_llm_response": object()}]
+
+    filename = main_mod.save_session_log(log)
+
+    assert filename is not None
+    written = json.loads(pathlib.Path(filename).read_text())  # valid JSON
+    assert written["session_id"] == "test-session-id"
+    assert written["stages"][0]["stage"] == "task_delegation"
+
+
+def test_feedback_history_write_is_not_partial(tmp_path, monkeypatch):
+    path = tmp_path / "feedback_history.json"
+    monkeypatch.setattr(main_mod, "FEEDBACK_HISTORY_FILE", str(path))
+
+    main_mod.save_feedback_history([{"feedback": "ok", "response": object()}])
+
+    assert json.loads(path.read_text())[0]["feedback"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_closed_stdin_exits_cleanly(mock_env_vars, mock_workflow, capsys):
+    """`python main.py </dev/null` died with a raw EOFError traceback.
+
+    KeyboardInterrupt was handled two lines away; EOF was not. Affects cron jobs,
+    `docker run` without -i, and piped input that runs out.
+    """
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("builtins.input", side_effect=EOFError):
+        await main()  # must not raise
+
+    assert "Goodbye" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_is_reported_and_recorded(mock_env_vars, capsys):
+    """A run where specialists failed but MPFC succeeded was presented as a clean
+    success, with no indication the answer was built from a partial analysis."""
+    mock_workflow = AsyncMock()
+    mock_workflow.ainvoke = AsyncMock(return_value={
+        "response": {"role": "assistant", "content": "Final answer."},
+        "error": False,
+        "agent_errors": {"VMPFC": "connection refused", "ACC": "connection refused"},
+    })
+    saved = {}
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["a task"])
+
+    out = capsys.readouterr().out
+    assert "Partial result" in out
+    assert "VMPFC" in out and "ACC" in out
+
+    assert saved["degraded"] is True
+    assert set(saved["agent_errors"]) == {"VMPFC", "ACC"}
+
+
+@pytest.mark.asyncio
+async def test_clean_run_is_not_marked_degraded(mock_env_vars, mock_workflow, capsys):
+    saved = {}
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["a task"])
+
+    assert saved["degraded"] is False
+    assert "Partial result" not in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -44,25 +146,28 @@ async def test_app_initialization(mock_env_vars, mock_workflow):
     with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
          patch("builtins.input", side_effect=["test task", "n", "exit"]), \
-         patch("main.create_session_log", return_value=MOCK_SESSION), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"):
         await main()
 
-        expected_state = {
-            "task": "test task",
-            "stage": "task_delegation",
-            "response": "",
-            "subtasks": [],
-            "feedback": "",
-            "previous_response": "",
-            "feedback_history": [],
-            "session_log": MOCK_SESSION,
-            "completed_stages": [],
-            "error": False,
-        }
-        mock_workflow.ainvoke.assert_called_with(
-            expected_state, config={"recursion_limit": 50}
-        )
+    args, kwargs = mock_workflow.ainvoke.call_args
+    state = args[0]
+
+    # main() mutates the session log it is handed, so compare the rest of the
+    # state by value and assert the session log separately by identity.
+    assert {k: v for k, v in state.items() if k != "session_log"} == {
+        "task": "test task",
+        "stage": "task_delegation",
+        "response": "",
+        "subtasks": [],
+        "feedback": "",
+        "previous_response": "",
+        "feedback_history": [],
+        "completed_stages": [],
+        "error": False,
+    }
+    assert state["session_log"]["session_id"] == "test-session-id"
+    assert kwargs == {"config": {"recursion_limit": 50}}
 
 
 @pytest.mark.asyncio
@@ -71,7 +176,7 @@ async def test_one_shot_argv(mock_env_vars, mock_workflow):
     without ever reading stdin."""
     with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
-         patch("main.create_session_log", return_value=MOCK_SESSION), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"), \
          patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
         await main(["one shot task"])
@@ -93,7 +198,7 @@ async def test_one_shot_error_result_terminates(mock_env_vars):
 
     with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
-         patch("main.create_session_log", return_value=MOCK_SESSION), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"), \
          patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
         await main(["failing task"])
@@ -109,7 +214,7 @@ async def test_graph_recursion_error_is_survivable(mock_env_vars):
 
     with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
-         patch("main.create_session_log", return_value=MOCK_SESSION), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"):
         # Should return normally (one-shot mode breaks after handling).
         await main(["a task that never converges"])
@@ -141,7 +246,7 @@ async def test_feedback_processing(mock_env_vars):
     with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
          patch("main.save_feedback_history") as mock_save, \
-         patch("main.create_session_log", return_value=MOCK_SESSION), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"), \
          patch("builtins.input", side_effect=["test task", "y", "Test feedback", "exit"]):
         await main()
@@ -155,21 +260,24 @@ async def test_feedback_processing(mock_env_vars):
 
 
 @pytest.mark.asyncio
-async def test_error_handling(mock_env_vars):
-    """Test error handling during workflow execution."""
+async def test_error_handling_keeps_interactive_session_alive(mock_env_vars):
+    """A workflow exception is reported but does not tear down the CLI.
+
+    A transient provider error used to propagate out of `main()` and kill the
+    whole interactive session; only GraphRecursionError was survivable. The user
+    should be able to try another task instead.
+    """
     mock_workflow = MagicMock()
     mock_workflow.ainvoke = AsyncMock(side_effect=Exception("Test error"))
 
-    with patch("sys.exit"), \
-         patch("main.create_workflow", return_value=mock_workflow), \
+    with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"), \
-         patch("builtins.input", side_effect=["test task"]), \
+         patch("builtins.input", side_effect=["test task", "exit"]), \
          patch("builtins.print") as mock_print:
-        try:
-            await main()
-        except Exception as e:
-            assert "Test error" in str(e)
+        # Returns normally: the loop survives and the user types 'exit'.
+        await main()
 
         error_calls = [
             call_args for call_args in mock_print.call_args_list
@@ -178,6 +286,85 @@ async def test_error_handling(mock_env_vars):
         assert len(error_calls) > 0
 
     assert mock_workflow.ainvoke.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_one_shot_workflow_exception_exits_nonzero(mock_env_vars):
+    """The same failure in one-shot mode exits non-zero so scripts/CI detect it."""
+    mock_workflow = MagicMock()
+    mock_workflow.ainvoke = AsyncMock(side_effect=Exception("Test error"))
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", return_value="test_log_file.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        with pytest.raises(SystemExit) as excinfo:
+            await main(["a task"])
+
+    assert excinfo.value.code == 1
+    assert mock_workflow.ainvoke.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_argv_task_exits_instead_of_looping(mock_env_vars, mock_workflow):
+    """C2 regression: `python main.py ""` used to spin forever.
+
+    One-shot mode re-reads argv[0] on every iteration, so an empty task hit
+    `continue` with no exit condition and looped printing the same error.
+    """
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        with pytest.raises(SystemExit) as excinfo:
+            await main([""])
+
+    assert excinfo.value.code == 1
+    mock_workflow.ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_one_shot_task_is_stripped(mock_env_vars, mock_workflow):
+    """Whitespace-only argv is empty, and a padded task is trimmed.
+
+    Only the interactive branch used to call .strip().
+    """
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        with pytest.raises(SystemExit):
+            await main(["   "])
+    mock_workflow.ainvoke.assert_not_called()
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", return_value="test_log_file.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["  padded task  "])
+    assert mock_workflow.ainvoke.call_args[0][0]["task"] == "padded task"
+
+
+@pytest.mark.asyncio
+async def test_errored_run_is_not_logged_as_completed(mock_env_vars):
+    """C10: `completed` was set True before the error check, so failed runs were
+    recorded in logs/ as successful."""
+    mock_workflow = AsyncMock()
+    mock_workflow.ainvoke = AsyncMock(return_value={
+        "response": {"role": "assistant", "content": "final synthesis failed"},
+        "error": True,
+    })
+    saved = {}
+
+    with patch("main.create_workflow", return_value=mock_workflow), \
+         patch("main.load_feedback_history", return_value=[]), \
+         patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
+         patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+        await main(["failing task"])
+
+    assert saved["completed"] is False
+    assert saved["error"] == "final synthesis failed"
 
 
 @pytest.mark.asyncio
@@ -203,8 +390,7 @@ async def test_missing_api_key(monkeypatch):
                 }
             }
         }
-    }):
-        with pytest.raises(SystemExit) as excinfo:
-            await main(["test task"])
+    }), pytest.raises(SystemExit) as excinfo:
+        await main(["test task"])
 
     assert excinfo.value.code == 1

@@ -1,9 +1,11 @@
-import pytest
-from unittest.mock import patch, AsyncMock
-from agents.specialized import VMPFCAgent, OFCAgent, ACCAgent, MPFCAgent
-from typing import Dict, Any, Type
 import asyncio
-from agents.base import BaseAgent # Import BaseAgent for type hinting
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from agents.base import BaseAgent  # Import BaseAgent for type hinting
+from agents.specialized import ACCAgent, MPFCAgent, OFCAgent, VMPFCAgent
+
 
 @pytest.fixture
 def mock_env_vars():
@@ -43,7 +45,7 @@ def mock_llm():
         mock_response = AsyncMock()
         mock_response.content = "test response"
         return mock_response
-    
+
     with patch("langchain_openai.ChatOpenAI.ainvoke", new=mock_ainvoke):
         yield
 
@@ -54,7 +56,7 @@ def mock_llm():
     MPFCAgent,
 ])
 @pytest.mark.asyncio
-async def test_specialized_agent_process(agent_class: Type[BaseAgent], mock_env_vars, test_state, mock_llm):
+async def test_specialized_agent_process(agent_class: type[BaseAgent], mock_env_vars, test_state, mock_llm):
     """Test specialized agent processing using mock_llm fixture"""
     agent = agent_class()
     # mock_llm fixture is automatically used here due to dependency injection
@@ -88,7 +90,7 @@ async def test_agent_timeout_handling(mock_env_vars, test_state):
     agents = [VMPFCAgent(), OFCAgent(), ACCAgent(), MPFCAgent()]
 
     for agent in agents:
-        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=asyncio.TimeoutError("Request timed out. Please try again.")):
+        with patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=TimeoutError("Request timed out. Please try again.")):
             result = await agent.process(test_state)
             assert result["error"]
             # Handle structured response
@@ -117,6 +119,6 @@ async def test_agent_initialization(mock_env_vars):
         (ACCAgent(), "ACC_MODEL", "acc-model"),
         (MPFCAgent(), "MPFC_MODEL", "mpfc-model")
     ]
-    
-    for agent, env_key, expected_model in test_cases:
+
+    for agent, _env_key, expected_model in test_cases:
         assert agent.llm.model_name == expected_model

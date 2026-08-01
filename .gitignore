@@ -164,6 +164,10 @@ feedback_history.json
 @feedback_history.json
 logs/
 
+# Tool caches. .ruff_cache self-ignores via a file ruff writes into it, but
+# listing it here keeps it ignored even if that file is removed.
+.ruff_cache/
+
 # Local Configuration
 # NOTE: config/agents.yaml is tracked and load-bearing (the app requires it),
 # so it is intentionally NOT ignored. Copy config/agents.example.yaml to create

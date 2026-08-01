@@ -1,8 +1,10 @@
-import pytest
 import asyncio
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from agents.dlpfc import DLPFCAgent
-from typing import Dict, Any
+
 
 @pytest.fixture
 def mock_env_vars():
@@ -67,10 +69,10 @@ async def test_dlpfc_agent_process(dlpfc_agent, test_state):
     2. Analyze results
     3. Generate final output
     """
-    
+
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
-    
+
     result = await dlpfc_agent.process(test_state)
     assert isinstance(result, dict)
     assert "subtasks" in result
@@ -82,17 +84,14 @@ async def test_dlpfc_agent_error_handling(dlpfc_agent, test_state):
     """Test error handling in DLPFC agent"""
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(side_effect=ValueError("Test error"))
-    
+
     result = await dlpfc_agent.process(test_state)
     assert result["error"]
-    
+
     # Check response content
     response = result["response"]
-    if isinstance(response, dict):
-        response_text = response["content"]
-    else:
-        response_text = response
-        
+    response_text = response["content"] if isinstance(response, dict) else response
+
     assert "error" in response_text.lower()
 
 @pytest.mark.asyncio
@@ -103,10 +102,80 @@ async def test_dlpfc_agent_timeout(dlpfc_agent, test_state):
         return None
 
     dlpfc_agent.process = mock_process
-    
+
     with pytest.raises(asyncio.TimeoutError):
         async with asyncio.timeout(0.001):
             await dlpfc_agent.process(test_state)
+
+SPEC_FORMAT_REPLY = """**AGENT DELEGATION:**
+- VMPFC Agent: YES - emotionally loaded
+- OFC Agent: NO
+- ACC Agent: YES - the stated goals conflict
+- MPFC Agent: YES - Always needed for final integration
+
+**Analysis:**
+The financial gap is modest but the wellbeing gain compounds.
+
+**Subtask Breakdown:**
+1. Weigh the personal impact of the pay cut
+2. Surface the contradiction between stated goals
+"""
+
+
+def test_delegation_block_is_not_parsed_as_subtasks(dlpfc_agent):
+    """The AGENT DELEGATION block holds routing decisions, not work items.
+
+    Without skipping it, "- VMPFC Agent: YES - emotionally loaded" became a
+    subtask literally named "YES - emotionally loaded", and a bare "NO" became
+    another. This only became user-visible once subtasks started being
+    propagated into workflow state.
+    """
+    subtasks = dlpfc_agent._parse_subtasks(SPEC_FORMAT_REPLY)
+    texts = [s["task"] for s in subtasks]
+
+    assert texts == [
+        "Weigh the personal impact of the pay cut",
+        "Surface the contradiction between stated goals",
+    ]
+    assert not any(t.strip() in {"NO", "YES"} or t.startswith(("YES", "NO")) for t in texts)
+
+
+def test_unknown_markdown_header_is_not_emitted_as_a_bullet(dlpfc_agent):
+    """"**Analysis:**" starts with '*', so it fell through to the bullet branch
+    and was rendered as a content bullet under the previous section's heading
+    (e.g. "🔄 Integration Plan: • Analysis:**")."""
+    content = dlpfc_agent._format_response(SPEC_FORMAT_REPLY)["response"]["content"]
+
+    assert "Analysis:**" not in content
+    assert "• Analysis" not in content
+
+
+def test_prose_only_reply_is_not_summarized_into_nothing(dlpfc_agent):
+    """A reply with none of the expected sections used to yield empty content."""
+    prose = "I recommend taking the job; the hours matter more than the pay gap."
+    content = dlpfc_agent._format_response(prose)["response"]["content"]
+
+    assert content.strip() == prose
+
+
+@pytest.mark.asyncio
+async def test_dlpfc_applies_inner_llm_timeout(dlpfc_agent, test_state):
+    """C8: DLPFC overrides process() and used to call self.llm.ainvoke directly,
+    bypassing AGENT_LLM_TIMEOUT_SECONDS. That made the 'inner timeout fires
+    before the outer node timeout' invariant vacuous for the one agent that runs
+    on every single task."""
+    async def slow_ainvoke(*args, **kwargs):
+        await asyncio.sleep(5)
+
+    dlpfc_agent.llm = AsyncMock()
+    dlpfc_agent.llm.ainvoke = slow_ainvoke
+
+    dlpfc_agent.llm_timeout = 0.01
+    result = await dlpfc_agent.process(test_state)
+
+    assert result["error"] is True
+    assert "timed out" in result["response"]["content"].lower()
+
 
 @pytest.mark.asyncio
 async def test_dlpfc_agent_cancellation_propagates(dlpfc_agent, test_state):
@@ -171,13 +240,13 @@ async def test_malformed_llm_response(dlpfc_agent, test_state):
         No proper numbering or structure
         """
     ]
-    
+
     for response in malformed_responses:
         mock_response = AsyncMock()
         mock_response.content = response
         dlpfc_agent.llm = AsyncMock()
         dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
-        
+
         result = await dlpfc_agent.process(test_state)
         assert isinstance(result, dict)
         assert "subtasks" in result
@@ -204,17 +273,17 @@ async def test_complex_subtask_assignments(dlpfc_agent):
     2. Analyze dependencies
     3. Generate final report
     """
-    
+
     subtasks = dlpfc_agent._parse_subtasks(complex_response)
     assert isinstance(subtasks, list)
     assert len(subtasks) > 0
-    
+
     # Verify structure handling
     tasks = [task["task"] for task in subtasks]
     assert any("Main Task A" in task for task in tasks)
     assert any("Subtask A1" in task for task in tasks)
     assert any("Subtask B1" in task for task in tasks)
-    
+
     # Verify agent assignments
     agent_assignments = [task["agent"] for task in subtasks if task["agent"]]
     assert "VMPFC" in agent_assignments
@@ -237,7 +306,7 @@ async def test_invalid_feedback_history(dlpfc_agent):
         # Extra fields
         [{"stage": "stage1", "response": "resp1", "feedback": "feed1", "extra": "field"}]
     ]
-    
+
     for history in invalid_histories:
         formatted = dlpfc_agent._format_feedback_history(history)
         assert isinstance(formatted, str)
@@ -260,15 +329,15 @@ async def test_concurrent_subtask_processing(dlpfc_agent):
     
     All tasks can be processed concurrently.
     """
-    
+
     dlpfc_agent.llm = AsyncMock()
     dlpfc_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
-    
+
     result = await dlpfc_agent.process({"task": "concurrent test"})
     assert isinstance(result, dict)
     assert "subtasks" in result
     assert len(result["subtasks"]) == 3
-    
+
     # Verify each task has proper assignment
     agents = [task["agent"] for task in result["subtasks"] if task["agent"]]
     assert len(agents) == 3
@@ -307,7 +376,7 @@ async def test_response_formatting_edge_cases(dlpfc_agent):
         </ul>
         """
     ]
-    
+
     for response in edge_case_responses:
         formatted = dlpfc_agent._format_response(response)
         assert isinstance(formatted, dict)

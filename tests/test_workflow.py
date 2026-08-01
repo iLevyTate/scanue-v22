@@ -1,12 +1,22 @@
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
-from workflow import (
-    create_workflow, process_hitl_feedback, NODE_TIMEOUT_SECONDS,
-    process_task_delegation, process_emotional_regulation,
-    process_reward_processing, process_conflict_detection, process_value_assessment,
-)
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from agents.base import AGENT_LLM_TIMEOUT_SECONDS
+from workflow import (
+    NODE_TIMEOUT_SECONDS,
+    PEER_INSIGHT_CHAR_BUDGET,
+    _prepare_value_assessment_state,
+    create_workflow,
+    parse_agent_assignments,
+    process_conflict_detection,
+    process_emotional_regulation,
+    process_hitl_feedback,
+    process_reward_processing,
+    process_task_delegation,
+    process_value_assessment,
+)
 
 # Mock ChatOpenAI at import time
 mock_chat_openai = AsyncMock()
@@ -25,9 +35,11 @@ TEST_CONFIG = {
 
 @pytest.fixture
 def mock_env_vars():
+    # LLMFactory imports provider SDKs lazily inside each branch, so patch the
+    # source module rather than a factory-module attribute.
     with patch.dict('os.environ', {'OPENAI_API_KEY': 'test-key'}), \
          patch('utils.config.ConfigLoader.load_config', return_value=TEST_CONFIG), \
-         patch('agents.factory.ChatOpenAI', return_value=mock_chat_openai):
+         patch('langchain_openai.ChatOpenAI', return_value=mock_chat_openai):
         yield
 
 
@@ -176,10 +188,16 @@ async def test_workflow_state_transitions(mock_env_vars):
     assert not final_state.get("error")
     assert "MPFC" in final_state.get("agent_responses", {})
     # All four specialist stages plus task_delegation recorded exactly once.
-    assert set(final_state["completed_stages"]) == {
+    expected = {
         "task_delegation", "emotional_regulation", "reward_processing",
         "conflict_detection", "value_assessment",
     }
+    assert set(final_state["completed_stages"]) == expected
+    # Length too, not just set membership: a set comparison is duplicate-blind,
+    # so a stage running twice would pass silently. This matters most if the
+    # specialists are ever made concurrent, where the natural implementation
+    # re-dispatches each sibling.
+    assert len(final_state["completed_stages"]) == len(expected)
 
 
 @pytest.mark.asyncio
@@ -270,9 +288,8 @@ async def test_cancellation_propagates(mock_env_vars, mock_state):
     async def dlpfc_cancel(self, state):
         raise asyncio.CancelledError()
 
-    with patch("agents.dlpfc.DLPFCAgent.process", new=dlpfc_cancel):
-        with pytest.raises(asyncio.CancelledError):
-            await process_task_delegation(mock_state)
+    with patch("agents.dlpfc.DLPFCAgent.process", new=dlpfc_cancel), pytest.raises(asyncio.CancelledError):
+        await process_task_delegation(mock_state)
 
 
 # --------------------------------------------------------------------------- #
@@ -290,6 +307,117 @@ async def test_process_task_delegation_success(mock_env_vars, mock_state):
         "emotional_regulation", "reward_processing", "conflict_detection", "value_assessment",
     ]
     assert "task_delegation" in result["completed_stages"]
+
+
+# A DLPFC reply that follows the REQUIRED FORMAT in the agent's own prompt.
+SPEC_FORMAT_DLPFC_REPLY = """**AGENT DELEGATION:**
+- VMPFC Agent: YES - the decision is emotionally loaded
+- OFC Agent: NO
+- ACC Agent: YES - the stakeholders want incompatible things
+- MPFC Agent: YES - Always needed for final integration
+
+**Analysis:**
+Two teams disagree about next quarter's roadmap.
+
+**Subtask Breakdown:**
+1. Map each stakeholder position
+2. Draft a resolution memo
+"""
+
+
+@pytest.mark.asyncio
+async def test_c1_regression_structured_delegation_reaches_the_router(mock_state):
+    """C1: the router must honor DLPFC's structured AGENT DELEGATION block.
+
+    `DLPFCAgent._format_response()` rebuilds the reply into a Subtasks /
+    Agent Assignments / Integration digest, keeping a bullet only when a
+    recognized section header preceded it. The delegation block is headed
+    "**AGENT DELEGATION:**", which matches none of those keywords, so every
+    "- VMPFC Agent: YES" line is dropped. Parsing that digest instead of the raw
+    reply silently collapsed nearly every run to MPFC-only.
+
+    The real agent runs here against a stubbed LLM, so the formatter and the
+    workflow wiring are both exercised.
+    """
+    llm = AsyncMock()
+    llm.model_name = "test-model"
+    llm.ainvoke = AsyncMock(return_value=MagicMock(content=SPEC_FORMAT_DLPFC_REPLY))
+
+    with patch("utils.config.ConfigLoader.load_config", return_value=TEST_CONFIG), \
+         patch("agents.factory.LLMFactory.create_llm", return_value=llm):
+        result = await process_task_delegation(mock_state)
+
+    assert result["delegated_agents"] == [
+        "emotional_regulation", "conflict_detection", "value_assessment",
+    ]
+
+    # Guard the guard: confirm the formatted digest really does lose the signal,
+    # so this test keeps failing if the parse source regresses to the digest.
+    digest = result["response"]["content"]
+    assert "vmpfc" not in digest.lower()
+    assert parse_agent_assignments(digest) == ["value_assessment"]
+
+
+def test_mpfc_receives_peer_insights_in_full():
+    """MPFC is the integration stage, but the peer-insight budget was 200 chars,
+    so it saw roughly the first 10-15% of each specialist's analysis, cut
+    mid-sentence."""
+    vmpfc = "The emotional stakes here are substantial. " * 30
+    state = {
+        "task": "t",
+        "agent_responses": {"VMPFC": {"role": "assistant", "content": vmpfc}},
+    }
+
+    insights = _prepare_value_assessment_state(state)["previous_agent_insights"]
+
+    assert len(vmpfc) > 1000  # a realistic specialist response
+    assert vmpfc.strip() in insights
+    assert "truncated" not in insights
+
+
+def test_peer_insights_are_truncated_only_when_over_budget():
+    """The ellipsis used to be appended unconditionally, so short responses were
+    labelled as truncated when they were complete."""
+    short = {"task": "t", "agent_responses": {"VMPFC": {"content": "Brief."}}}
+    assert "truncated" not in _prepare_value_assessment_state(short)["previous_agent_insights"]
+
+    long = {"task": "t", "agent_responses": {"VMPFC": {"content": "x" * (PEER_INSIGHT_CHAR_BUDGET + 50)}}}
+    insights = _prepare_value_assessment_state(long)["previous_agent_insights"]
+    assert "[...truncated]" in insights
+    assert len(insights) < PEER_INSIGHT_CHAR_BUDGET + 200
+
+
+@pytest.mark.asyncio
+async def test_delegation_delta_propagates_subtasks(mock_env_vars, mock_state):
+    """C6: DLPFC parses subtasks, but the delta used to drop the key, so
+    state["subtasks"] stayed [] for the whole run and the parsing was dead."""
+    parsed = [{"task": "Map stakeholders", "agent": "VMPFC Agent", "category": "general"}]
+    dlpfc_result = {**_ok_response(FULL_DELEGATION), "subtasks": parsed}
+
+    with patch("agents.dlpfc.DLPFCAgent.process", new=AsyncMock(return_value=dlpfc_result)):
+        result = await process_task_delegation(mock_state)
+
+    assert result["subtasks"] == parsed
+
+
+@pytest.mark.asyncio
+async def test_hitl_feedback_entry_has_both_stage_and_timestamp():
+    """C7: the CLI and the workflow used to emit different record shapes -- one
+    with `stage` and no `timestamp`, the other the reverse. DLPFC's history
+    formatter reads `stage`, so entries from this path rendered 'Stage: unknown'."""
+    state = {
+        "stage": "value_assessment",
+        "response": {"role": "assistant", "content": "final answer"},
+        "feedback_history": [],
+    }
+
+    updated = process_hitl_feedback(state, "needs more detail")
+    entry = updated["feedback_history"][0]
+
+    assert entry["stage"] == "value_assessment"
+    assert entry["timestamp"]
+    assert entry["feedback"] == "needs more detail"
+    assert entry["response"] == "final answer"
 
 
 @pytest.mark.asyncio
