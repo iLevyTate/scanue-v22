@@ -160,6 +160,7 @@ Key modules:
 - `utils/config.py`: YAML config loader with legacy env-var fallback
 - `config/agents.yaml`: per-agent model/provider configuration
 - `docs/local_models.md`: guide for Ollama / HuggingFace / OpenAI configuration
+- `CHANGELOG.md`: notable changes per release
 - `tests/`: pytest suite covering agents, workflow, HITL, and CLI
 - `scripts/validate.py`: one-command validation against a real provider
 - `feedback_history.json`: persistent Human-in-the-Loop (HITL) feedback (gitignored)
