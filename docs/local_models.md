@@ -20,12 +20,40 @@ agents:
         name: "llama3:70b"       # model identifier
         temperature: 0.1         # creativity level (0.0 - 1.0)
         base_url: "http://localhost:11434" # optional for local
-      
+        timeout: 120             # seconds for one LLM call (default: 30)
+        max_retries: 3           # retries after the first attempt (0 disables)
+        num_ctx: 8192            # ollama only: context window in tokens
+        max_tokens: 1024         # cap on output length (ollama: num_predict)
+
       # Optional specialized models (future proofing)
       fast:
         provider: "ollama"
         name: "llama3:8b"
         temperature: 0.0
+```
+
+### Options that matter most for local models
+
+- **`num_ctx` — set it explicitly.** Left unset, the Ollama server applies its
+  own default (commonly 2048 tokens) and **silently drops** anything past it —
+  no error, no log line, just a truncated prompt. Match it to your model's real
+  capability. SCANUE logs each prompt's approximate token count (visible with
+  `SCANUE_LOG_LEVEL=DEBUG`) so you can see how close you are.
+- **`timeout`** — local models on CPU can be slow; the default 30 s per call is
+  tuned for cloud APIs. 120 s is a sensible floor for CPU inference.
+- **`max_retries`** — retries with exponential backoff apply to every provider,
+  so a transient blip on a local server no longer fails the whole stage.
+- **`max_tokens`** — if a response hits this cap, the run summary flags the
+  stage (`finish_reason: length`) instead of passing a cut-off answer as
+  complete.
+
+### Verifying your setup
+
+After configuring, run one real task with pass/fail checks — schema compliance,
+token capture, context headroom:
+
+```bash
+python scripts/validate.py
 ```
 
 ## Supported Providers
@@ -75,6 +103,16 @@ Each agent mimics a specific cognitive function. Here are recommended model type
 | **OFC** | Reward Processing | Analytical, math-capable models |
 | **ACC** | Conflict Monitoring | Strict, logical models with low temperature |
 | **MPFC** | Integration | High context window models to synthesize all inputs |
+
+## Small models and delegation
+
+DLPFC decides which specialists run, and it is asked for a **schema-validated**
+decision (`with_structured_output`). Small local models sometimes cannot honor
+the schema, in which case SCANUE falls back to parsing the text reply and
+records how the decision was made in `logs/session_*.json` as
+`delegation_source`. If your runs show anything other than `structured_output`
+there, routing is being inferred rather than stated — a larger DLPFC model
+usually fixes it. See the README's Delegation section for the full table.
 
 ## Backward Compatibility
 
