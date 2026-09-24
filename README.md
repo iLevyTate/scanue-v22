@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14510406.svg)](https://doi.org/10.5281/zenodo.14510406)
 
-<img width="2752" height="1536" alt="SCANUE" src="https://github.com/user-attachments/assets/7b4ec095-8238-4b62-9dcb-1531dff5c8a9" />
+<img width="2560" height="1280" alt="GitHub social preview, 1280 × 640@2x" src="https://github.com/user-attachments/assets/3741b8ea-2be5-439a-8f36-b1f3a191bdd7" />
 
 ## **Overview**
 SCANUE v22 is a brain-inspired, **multi-agent** CLI that orchestrates specialized “PFC region” agents using **LangGraph**. It focuses on decomposing a task (DLPFC) and then conditionally invoking only the necessary specialist agents (VMPFC/OFC/ACC) before final integration (MPFC).
