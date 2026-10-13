@@ -342,9 +342,10 @@ async def main(args=None):
                     if log_file:
                         print(f"\n📝 Session log saved to: {log_file}")
 
-                    # One-shot runs must not loop back onto the same failing task.
+                    # One-shot runs must not loop back onto the same failing task,
+                    # and must exit non-zero so scripts and CI see the failure.
                     if not interactive:
-                        break
+                        sys.exit(1)
                     continue
 
                 # Extract content from structured response
@@ -437,7 +438,7 @@ async def main(args=None):
                 print(f"\n❌ {error_msg}")
 
                 if not interactive:
-                    break
+                    sys.exit(1)
                 continue
 
             except Exception as e:

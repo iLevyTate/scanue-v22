@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `timeout:` in `config/agents.yaml` now takes effect above 45s. Each node's
+  outer timeout was a fixed 45s, so the shipped `timeout: 120` was silently
+  capped. It is now derived from the configured value, and DLPFC's budget
+  covers both its structured attempt and its free-text fallback.
+- Timeout errors say "timed out after Ns" instead of an empty message.
+- One-shot runs (`scanue "task"`) exit with status 1 when the run fails or does
+  not converge; they previously printed the error and exited 0.
+- Token usage is recorded for DLPFC's structured-output path (it was always
+  empty), and a schema validation failure no longer triggers retries.
+- The YES/NO delegation parser accepts `[YES]`, `**NO**` and similar, and an
+  explicit NO for every specialist runs MPFC alone instead of guessing from
+  keywords.
+- Timeout warnings log the timeout actually used; `validate.py --keep` help
+  text describes what the flag does.
+
 ## 1.3.0 — 2026-07-30
 
 Full audit and repair of the multi-agent pipeline (PR #15). Verified by 217

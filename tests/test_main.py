@@ -200,26 +200,31 @@ async def test_one_shot_error_result_terminates(mock_env_vars):
          patch("main.load_feedback_history", return_value=[]), \
          patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", return_value="test_log_file.json"), \
-         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")), \
+         pytest.raises(SystemExit) as excinfo:
         await main(["failing task"])
 
     assert mock_workflow.ainvoke.call_count == 1
+    # Exits non-zero: printing the failure and returning 0 told scripts and CI
+    # the run had succeeded.
+    assert excinfo.value.code == 1
 
 
 @pytest.mark.asyncio
 async def test_graph_recursion_error_is_survivable(mock_env_vars):
-    """A GraphRecursionError is caught and does not crash the CLI."""
+    """A GraphRecursionError is caught (no traceback) and a one-shot run exits 1."""
     mock_workflow = AsyncMock()
     mock_workflow.ainvoke = AsyncMock(side_effect=GraphRecursionError("limit reached"))
 
     with patch("main.create_workflow", return_value=mock_workflow), \
          patch("main.load_feedback_history", return_value=[]), \
          patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
-         patch("main.save_session_log", return_value="test_log_file.json"):
-        # Should return normally (one-shot mode breaks after handling).
+         patch("main.save_session_log", return_value="test_log_file.json"), \
+         pytest.raises(SystemExit) as excinfo:
         await main(["a task that never converges"])
 
     assert mock_workflow.ainvoke.call_count == 1
+    assert excinfo.value.code == 1
 
 
 @pytest.mark.asyncio
@@ -360,7 +365,8 @@ async def test_errored_run_is_not_logged_as_completed(mock_env_vars):
          patch("main.load_feedback_history", return_value=[]), \
          patch("main.create_session_log", side_effect=lambda task: _mock_session()), \
          patch("main.save_session_log", side_effect=lambda log: saved.update(log) or "f.json"), \
-         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")):
+         patch("builtins.input", side_effect=AssertionError("stdin must not be read in one-shot mode")), \
+         pytest.raises(SystemExit):
         await main(["failing task"])
 
     assert saved["completed"] is False

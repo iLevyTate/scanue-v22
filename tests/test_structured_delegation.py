@@ -248,3 +248,75 @@ async def test_dlpfc_failure_is_labelled_resilient_fallback():
         delta = await process_task_delegation({"task": "t", "completed_stages": []})
 
     assert delta["delegation_source"] == "resilient_fallback"
+
+
+# --------------------------------------------------------------------------- #
+# include_raw: usage on the preferred path, no retries on schema failures
+# --------------------------------------------------------------------------- #
+
+def _usage_message(total):
+    return MagicMock(
+        usage_metadata={"input_tokens": total - 1, "output_tokens": 1, "total_tokens": total},
+        response_metadata={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_structured_path_records_token_usage(agent):
+    """The preferred path recorded `usage: {}` on every run, so run totals
+    under-counted and truncation of DLPFC's reply was never detected."""
+    agent.llm = _structured_llm({
+        "raw": _usage_message(42),
+        "parsed": AgentDelegation(vmpfc=True, ofc=False, acc=False),
+        "parsing_error": None,
+    })
+
+    result = await agent.process({"task": "t"})
+
+    assert result["delegation_source"] == "structured_output"
+    assert result["raw_llm_response"]["usage"]["total_tokens"] == 42
+    agent.llm.with_structured_output.assert_called_once_with(AgentDelegation, include_raw=True)
+
+
+@pytest.mark.asyncio
+async def test_parsing_error_falls_back_without_raising(agent):
+    """With include_raw, a schema failure is returned as data rather than raised,
+    so the retry wrapper cannot regenerate (and re-bill) it."""
+    llm = _structured_llm({"raw": _usage_message(7), "parsed": None, "parsing_error": ValueError("bad")})
+    llm.ainvoke = AsyncMock(return_value=MagicMock(content="- VMPFC Agent: YES"))
+    agent.llm = llm
+
+    result = await agent.process({"task": "t"})
+
+    assert not result["error"]
+    assert "delegated_agents" not in result  # free-text path ran
+    llm.ainvoke.assert_awaited()
+
+
+# --------------------------------------------------------------------------- #
+# Text parsing tolerates decorated YES/NO answers
+# --------------------------------------------------------------------------- #
+
+def test_bracketed_and_bold_answers_are_structured():
+    """The prompt's template shows '[YES/NO]'; a model that kept the brackets or
+    bolded the answer fell through to keyword scanning, which picked up OFC from
+    the reason written on its NO line."""
+    reply = (
+        "- VMPFC Agent: [NO]\n"
+        "- OFC Agent: NO - no financial trade-offs or costs involved\n"
+        "- ACC Agent: **YES** - competing options\n"
+        "- MPFC Agent: YES"
+    )
+    assert parse_agent_assignments_with_source(reply) == (
+        ["conflict_detection", "value_assessment"], "structured_text",
+    )
+
+
+def test_explicit_all_no_runs_mpfc_only():
+    reply = "- VMPFC Agent: NO\n- OFC Agent: NO - cost\n- ACC Agent: NO\n- MPFC Agent: NO"
+    assert parse_agent_assignments_with_source(reply) == (["value_assessment"], "structured_text")
+
+
+def test_unfilled_template_is_not_a_decision():
+    _, source = parse_agent_assignments_with_source("VMPFC Agent: [YES/NO]")
+    assert source != "structured_text"
