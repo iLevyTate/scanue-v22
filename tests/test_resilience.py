@@ -123,3 +123,53 @@ async def test_agent_invokes_through_the_retry_wrapper():
     with patch.object(LLMFactory, "wrap_with_retry", return_value=MagicMock()) as wrap:
         agent.invoker()
     wrap.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
+# Outer node timeout follows the configured inner timeout
+# --------------------------------------------------------------------------- #
+
+def test_node_timeout_honours_a_long_configured_timeout():
+    """The shipped config sets `timeout: 120`, but every node used to be killed
+    by a fixed 45s outer timeout -- so the configured value never took effect."""
+    from workflow import node_timeout_for
+
+    agent = MagicMock(llm_timeout=120.0, LLM_CALLS_PER_PROCESS=1)
+    assert node_timeout_for(agent) > 120.0
+
+
+def test_node_timeout_covers_both_dlpfc_calls():
+    """DLPFC can make a structured call and then a free-text fallback, each with
+    the full inner budget; two 30s calls used to overrun the 45s node cap."""
+    from agents.dlpfc import DLPFCAgent
+    from workflow import node_timeout_for
+
+    agent = MagicMock(llm_timeout=30.0, LLM_CALLS_PER_PROCESS=DLPFCAgent.LLM_CALLS_PER_PROCESS)
+    assert node_timeout_for(agent) > 2 * 30.0
+
+
+def test_node_timeout_keeps_its_floor_and_tolerates_odd_agents():
+    from workflow import NODE_TIMEOUT_SECONDS, node_timeout_for
+
+    assert node_timeout_for(MagicMock(llm_timeout=5.0, LLM_CALLS_PER_PROCESS=1)) == NODE_TIMEOUT_SECONDS
+    # A bare mock has non-numeric attributes; fall back to the defaults.
+    assert node_timeout_for(MagicMock()) > AGENT_LLM_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_outer_timeout_error_is_not_blank():
+    """str(TimeoutError()) is empty, so an outer timeout used to be reported as
+    'Error in task delegation: ' with no detail at all."""
+    from workflow import process_task_delegation
+
+    config = {"agents": {"DLPFC": {"models": {"primary": {"provider": "ollama", "name": "m"}}}}}
+
+    async def bare_timeout(self, state):
+        raise TimeoutError()
+
+    with patch("utils.config.ConfigLoader.load_config", return_value=config), \
+         patch("agents.factory.LLMFactory.create_llm", return_value=MagicMock(model_name="m")), \
+         patch("agents.dlpfc.DLPFCAgent.process", new=bare_timeout):
+        delta = await process_task_delegation({"task": "t", "completed_stages": []})
+
+    assert "timed out after" in delta["agent_errors"]["DLPFC"]

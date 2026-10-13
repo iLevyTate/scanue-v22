@@ -9,6 +9,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from agents.base import AGENT_LLM_TIMEOUT_SECONDS
 from agents.dlpfc import DLPFCAgent
 from agents.specialized import ACCAgent, MPFCAgent, OFCAgent, VMPFCAgent
 
@@ -28,10 +29,39 @@ def _response_content(response: Any) -> Any:
         return response["content"]
     return response
 
-# Outer per-node timeout. MUST stay strictly greater than the agent's inner LLM
-# timeout (AGENT_LLM_TIMEOUT_SECONDS in agents/base.py, 30s) so the inner call
-# fails and is reported cleanly instead of racing the outer wait_for.
+# Outer per-node timeout floor. The actual budget for a node comes from
+# `node_timeout_for()`, which scales it with the agent's configured inner LLM
+# timeout so the inner call always fails first and is reported cleanly instead
+# of racing the outer wait_for.
 NODE_TIMEOUT_SECONDS = 45.0
+
+# Headroom above the inner LLM budget for prompt building, parsing and logging.
+NODE_TIMEOUT_MARGIN_SECONDS = 15.0
+
+
+def node_timeout_for(agent: Any) -> float:
+    """Outer timeout for one node, derived from the agent's inner LLM timeout.
+
+    A fixed 45s cap used to silently override `timeout:` in config/agents.yaml:
+    the shipped config sets 120s for slow local models, but every node was
+    still killed at 45s. DLPFC can make two sequential LLM calls (structured
+    attempt, then free-text fallback), so its budget covers both.
+    """
+    inner = getattr(agent, "llm_timeout", None)
+    if not isinstance(inner, (int, float)) or isinstance(inner, bool) or inner <= 0:
+        inner = AGENT_LLM_TIMEOUT_SECONDS
+    calls = getattr(agent, "LLM_CALLS_PER_PROCESS", 1)
+    if not isinstance(calls, int) or calls < 1:
+        calls = 1
+    return max(NODE_TIMEOUT_SECONDS, inner * calls + NODE_TIMEOUT_MARGIN_SECONDS)
+
+
+def _describe_error(e: BaseException, timeout: float) -> str:
+    """Readable error text. str(TimeoutError()) is empty, which used to print
+    'Error in task delegation: ' with nothing after it."""
+    if isinstance(e, TimeoutError):
+        return f"timed out after {timeout:g}s"
+    return str(e) or type(e).__name__
 
 # Per-agent character budget for the peer insights handed to MPFC.
 #
@@ -236,6 +266,22 @@ def parse_agent_assignments(dlpfc_response: str) -> list:
     return parse_agent_assignments_with_source(dlpfc_response)[0]
 
 
+def _structured_decision(agent_name: str, response_lower: str) -> bool | None:
+    """The explicit YES/NO a reply gives for one agent, or None if it gives none.
+
+    Tolerates the decorations models add around the prompt's "[YES/NO]"
+    template: "VMPFC Agent: [YES]", "**ACC Agent:** **no**", "- OFC: (Yes)".
+    The unfilled template itself ("[yes/no]") is not a decision.
+    """
+    match = re.search(
+        rf"\b{agent_name.lower()}(?: agent)?[\s*_]*:[\s*_\[(]*(yes|no)\b(?!\s*/)",
+        response_lower,
+    )
+    if not match:
+        return None
+    return match.group(1) == "yes"
+
+
 def parse_agent_assignments_with_source(dlpfc_response: str) -> tuple:
     """Parse the DLPFC response and report which strategy decided the routing.
 
@@ -273,21 +319,22 @@ def parse_agent_assignments_with_source(dlpfc_response: str) -> tuple:
     # STRATEGY 1: Parse structured format (YES/NO responses)
     structured_found = False
     for agent_name, stage_name in agent_map.items():
-        # Look for "- VMPFC Agent: YES" pattern
-        yes_patterns = [
-            rf"- {agent_name.lower()} agent:\s*yes",
-            rf"{agent_name.lower()} agent:\s*yes",
-            rf"- {agent_name.lower()}:\s*yes"
-        ]
+        decision = _structured_decision(agent_name, response_lower)
+        if decision is None:
+            continue
+        # An explicit NO is a decision too. Without counting it, a reply where
+        # every specialist was declined fell through to keyword scanning, which
+        # then picked agents up from the reasons written on the NO lines.
+        structured_found = True
+        source = "structured_text"
+        if decision and stage_name not in agent_assignments:
+            agent_assignments.append(stage_name)
+            logger.debug("Structured format: %s -> %s", agent_name, stage_name)
 
-        for pattern in yes_patterns:
-            if re.search(pattern, response_lower):
-                if stage_name not in agent_assignments:
-                    agent_assignments.append(stage_name)
-                    structured_found = True
-                    source = "structured_text"
-                    logger.debug("Structured format: %s -> %s", agent_name, stage_name)
-                break
+    if structured_found and "value_assessment" not in agent_assignments:
+        # The model answered explicitly; if it declined everyone, MPFC alone runs
+        # (it always integrates) rather than the keyword fallbacks guessing.
+        agent_assignments.append("value_assessment")
 
     # STRATEGY 2: Semantic keyword analysis (if structured format not found)
     if not structured_found:
@@ -382,8 +429,9 @@ async def process_task_delegation(state: AgentState) -> dict[str, Any]:
     # (VMPFC + ACC + MPFC). OFC is excluded because DLPFC most often omits it.
     resilient_delegation = ["emotional_regulation", "conflict_detection", "value_assessment"]
 
+    node_timeout = node_timeout_for(dlpfc)
     try:
-        result = await asyncio.wait_for(dlpfc.process(state), timeout=NODE_TIMEOUT_SECONDS)
+        result = await asyncio.wait_for(dlpfc.process(state), timeout=node_timeout)
 
         # Check for agent-reported errors
         if result.get("error"):
@@ -467,14 +515,15 @@ async def process_task_delegation(state: AgentState) -> dict[str, Any]:
     except Exception as e:
         # asyncio.TimeoutError and all provider errors are subclasses of Exception;
         # asyncio.CancelledError is a BaseException and intentionally propagates.
-        error_msg = f"Error in task delegation: {str(e)}"
+        detail = _describe_error(e, node_timeout)
+        error_msg = f"Error in task delegation: {detail}"
         print(f"❌ {error_msg}")
 
         error_response = {"role": "assistant", "content": error_msg}
         agent_errors["DLPFC"] = error_msg
 
         if stage_log:
-            stage_log = log_stage_end(stage_log, {"response": error_response}, str(e))
+            stage_log = log_stage_end(stage_log, {"response": error_response}, detail)
             stage_log["delegation_source"] = "resilient_fallback"
             stage_log["delegated_agents"] = list(resilient_delegation)
 
@@ -501,7 +550,9 @@ def _prepare_value_assessment_state(state: Mapping[str, Any]) -> dict[str, Any]:
     and present the result to the user as the answer. MPFC is told which peers
     are missing instead, so it can qualify its conclusion.
     """
-    enhanced_state: dict[str, Any] = dict(copy.deepcopy(state))
+    # Shallow copy: only top-level keys are added below, and deep-copying the
+    # whole session_log (every stage's prompt and raw response) was pure waste.
+    enhanced_state: dict[str, Any] = dict(state)
     responses = state.get("agent_responses") or {}
     failed = set(state.get("agent_errors") or {})
 
@@ -557,8 +608,9 @@ async def _run_specialist_stage(
 
     process_input = prepare_state(state) if prepare_state else state
 
+    node_timeout = node_timeout_for(agent)
     try:
-        result = await asyncio.wait_for(agent.process(process_input), timeout=NODE_TIMEOUT_SECONDS)
+        result = await asyncio.wait_for(agent.process(process_input), timeout=node_timeout)
 
         # Per-agent failures are recorded but do not stop the workflow.
         agent_reported_error = None
@@ -596,14 +648,15 @@ async def _run_specialist_stage(
 
     except Exception as e:
         # asyncio.CancelledError (BaseException) intentionally propagates.
-        error_msg = f"Error in {stage_name.replace('_', ' ')}: {str(e)}"
+        detail = _describe_error(e, node_timeout)
+        error_msg = f"Error in {stage_name.replace('_', ' ')}: {detail}"
         print(f"❌ {error_msg}")
 
         error_response = {"role": "assistant", "content": error_msg}
         agent_errors[agent_name] = error_msg
 
         if stage_log:
-            stage_log = log_stage_end(stage_log, {"response": error_response}, str(e))
+            stage_log = log_stage_end(stage_log, {"response": error_response}, detail)
 
         delta = {
             "response": error_response,

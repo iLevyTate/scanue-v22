@@ -18,9 +18,9 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Default inner LLM call timeout, used when a model has no `timeout:` in config.
-# MUST stay strictly less than the outer per-node timeout (NODE_TIMEOUT_SECONDS
-# in workflow.py) so the inner call fails first and is reported cleanly instead
-# of racing the node's outer wait_for.
+# The outer per-node timeout (workflow.node_timeout_for) is derived from the
+# resolved value, so the inner call always fails first and is reported cleanly
+# instead of racing the node's outer wait_for.
 AGENT_LLM_TIMEOUT_SECONDS = 30.0
 
 
@@ -309,7 +309,7 @@ class BaseAgent(ABC):
             return result
         except TimeoutError:
             error_msg = "Request timed out. Please try again."
-            logger.warning("%s LLM call timed out after %ss", self.agent_name, AGENT_LLM_TIMEOUT_SECONDS)
+            logger.warning("%s LLM call timed out after %ss", self.agent_name, self.llm_timeout)
             return {
                 "response": {"role": "assistant", "content": error_msg},
                 "raw_llm_response": None,

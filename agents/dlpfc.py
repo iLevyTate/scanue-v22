@@ -67,6 +67,11 @@ class AgentDelegation(BaseModel):
 class DLPFCAgent(BaseAgent):
     """Dorsolateral Prefrontal Cortex Agent - Central Controller"""
 
+    # A structured attempt that fails validation is followed by a free-text
+    # call, so the node's outer timeout must cover two inner LLM budgets
+    # (see workflow.node_timeout_for).
+    LLM_CALLS_PER_PROCESS = 2
+
     def __init__(self):
         super().__init__(agent_name="DLPFC", model_env_key="DLPFC_MODEL")
         # Per-call observability. The structured attempt costs tokens even when
@@ -170,7 +175,11 @@ class DLPFCAgent(BaseAgent):
         self._last_usage = {}
 
         try:
-            structured_llm = self.llm.with_structured_output(AgentDelegation)
+            # include_raw keeps the provider message, so token usage is recorded
+            # for this (the preferred) path too, and makes a schema failure come
+            # back as data instead of an exception -- which the retry wrapper
+            # would otherwise regenerate and bill up to max_retries more times.
+            structured_llm = self.llm.with_structured_output(AgentDelegation, include_raw=True)
         except Exception as e:
             logger.warning("Structured output unavailable for DLPFC (%s); using text parsing", e)
             return None
@@ -203,6 +212,18 @@ class DLPFCAgent(BaseAgent):
         except Exception as e:
             logger.warning("Structured delegation call failed (%s); using text parsing", e)
             return None
+
+        if isinstance(result, dict) and "parsed" in result:
+            raw = result.get("raw")
+            if raw is not None:
+                self._last_usage = extract_usage(raw)
+            if result.get("parsing_error") is not None:
+                logger.warning(
+                    "Structured delegation failed validation (%s); using text parsing",
+                    result["parsing_error"],
+                )
+                return None
+            result = result.get("parsed")
 
         if not isinstance(result, AgentDelegation):
             # Notably covers mocked LLMs in tests, which return sentinel objects.

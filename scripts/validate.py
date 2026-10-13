@@ -249,7 +249,10 @@ async def _run(task: str, state_dir: Path) -> None:
 def main_entry() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--task", default=DEFAULT_TASK, help="task to run")
-    parser.add_argument("--keep", action="store_true", help="keep the temp state dir")
+    parser.add_argument(
+        "--keep", action="store_true",
+        help="also write the full session log to ./validate-session.json",
+    )
     args = parser.parse_args()
 
     print(f"Running one real task against your configured providers:\n  {args.task!r}\n")
