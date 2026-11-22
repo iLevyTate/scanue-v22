@@ -15,7 +15,7 @@ dependencies = [
     "langchain-openai>=1.0,<2.0",
     "langchain-ollama>=1.0,<2.0",
     "langchain-huggingface>=1.0,<2.0",
-    "openai>=2.0,<3.0",
+    "openai>=2.0,<4.0",
     "pydantic>=2.0,<3.0",
     "python-dotenv>=1.0,<2.0",
     "pyyaml>=6.0,<7.0",
@@ -28,7 +28,7 @@ dev = [
     # Upper bounds matter more for linters than for libraries: they gate CI, and
     # a new release that adds default rules turns a green build red with no code
     # change. Validated against ruff 0.16 and mypy 2.3; raise deliberately.
-    "ruff>=0.6,<0.17",
+    "ruff>=0.6,<0.18",
     "mypy>=1.11,<3.0",
     "types-PyYAML",
 ]
